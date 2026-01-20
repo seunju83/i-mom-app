@@ -1,6 +1,6 @@
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { PregnancyStage, AgeGroup, BloodTestResult, HbLevel, Symptom, SurveyData, Product, ConsultationRecord, Pharmacist, PharmacyConfig } from './types';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Product, ConsultationRecord, Pharmacist, PharmacyConfig, SurveyData } from './types';
 import { INITIAL_PRODUCTS, DISCLAIMER } from './constants';
 import HomeView from './components/HomeView';
 import SurveyView from './components/SurveyView';
@@ -23,126 +23,98 @@ const App: React.FC = () => {
   });
   
   const [syncCode, setSyncCode] = useState<string>(localStorage.getItem('i-mom-sync-code') || '');
-  const [syncStatus, setSyncStatus] = useState<'connected' | 'error' | 'syncing' | 'idle' | 'initializing'>('idle');
+  const [syncStatus, setSyncStatus] = useState<'connected' | 'error' | 'syncing' | 'idle'>('idle');
   const [lastSyncTime, setLastSyncTime] = useState<string>('');
   
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
 
-  // [Push] 데이터를 서버에 저장 (CORS 및 에러 핸들링 강화)
+  // [데이터 보호 로직] 로컬 스토리지에 제품 정보가 없으면 기본값 강제 주입
+  const loadLocalData = useCallback(() => {
+    const savedProducts = localStorage.getItem('i-mom-products');
+    const parsedProducts = savedProducts ? JSON.parse(savedProducts) : INITIAL_PRODUCTS;
+    setProducts(parsedProducts.length > 0 ? parsedProducts : INITIAL_PRODUCTS);
+
+    const savedRecords = localStorage.getItem('i-mom-records');
+    if (savedRecords) setRecords(JSON.parse(savedRecords));
+
+    const savedConfig = localStorage.getItem('i-mom-config');
+    if (savedConfig) setPharmacyConfig(JSON.parse(savedConfig));
+  }, []);
+
   const pushToCloud = useCallback(async (code: string, currentRecords: ConsultationRecord[], currentProducts: Product[]) => {
     if (!code || code.trim().length < 3 || !navigator.onLine) return;
-    const targetCode = code.trim();
-
     try {
       setSyncStatus('syncing');
-      const payload = JSON.stringify({
+      const payload = {
         records: currentRecords,
         products: currentProducts,
         updatedAt: Date.now()
-      });
-
-      const response = await fetch(`${SYNC_API_BASE}/${targetCode}`, {
+      };
+      const response = await fetch(`${SYNC_API_BASE}/${code.trim()}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'text/plain' }, // CORS preflight 회피
+        headers: { 'Content-Type': 'application/json' },
         mode: 'cors',
-        body: payload
+        body: JSON.stringify(payload)
       });
-
       if (response.ok) {
         setSyncStatus('connected');
         setLastSyncTime(new Date().toLocaleTimeString());
-      } else {
-        setSyncStatus('error');
       }
-    } catch (e) {
-      setSyncStatus('error');
-    }
+    } catch (e) { setSyncStatus('error'); }
   }, []);
 
-  // [Pull] 서버 데이터를 가져오고 지능적으로 병합 (유실 방지 핵심)
   const pullFromCloud = useCallback(async (code: string) => {
     if (!code || code.trim().length < 3 || !navigator.onLine) return;
-    const targetCode = code.trim();
-    
     try {
       setSyncStatus('syncing');
-      const response = await fetch(`${SYNC_API_BASE}/${targetCode}?nocache=${Date.now()}`, { 
-        method: 'GET',
-        headers: { 'Accept': 'application/json' },
-        mode: 'cors',
-        cache: 'no-store'
-      });
+      const response = await fetch(`${SYNC_API_BASE}/${code.trim()}?t=${Date.now()}`, { mode: 'cors' });
       
-      // 서버에 데이터가 아예 없는 경우 (404) -> 내 로컬 데이터를 서버로 복제하여 연동 시작
+      // 1. 서버에 데이터가 없으면(404) 내 현재 데이터를 서버로 즉시 전송 (Seeding)
       if (response.status === 404) {
-        setSyncStatus('initializing');
-        const localRecs = JSON.parse(localStorage.getItem('i-mom-records') || '[]');
-        const localProds = JSON.parse(localStorage.getItem('i-mom-products') || JSON.stringify(INITIAL_PRODUCTS));
-        await pushToCloud(targetCode, localRecs, localProds);
+        await pushToCloud(code, records, products);
         return;
       }
 
       if (response.ok) {
-        const data = await response.json();
-        
-        // 데이터 무결성 체크: 서버 데이터가 너무 부실하면 무시 (유실 방지)
-        if (!data || (!data.records && !data.products)) {
-          setSyncStatus('error');
-          return;
-        }
+        const remoteData = await response.json();
+        if (!remoteData || !remoteData.products) return;
 
-        // 1. 상담 기록 지능형 병합 (ID 기준)
-        const localRecords: ConsultationRecord[] = JSON.parse(localStorage.getItem('i-mom-records') || '[]');
-        const recordMap = new Map();
-        localRecords.forEach(r => recordMap.set(r.id, r));
-        
-        if (data.records && Array.isArray(data.records)) {
-          data.records.forEach((r: ConsultationRecord) => {
-            if (!recordMap.has(r.id)) recordMap.set(r.id, r);
+        // 2. 지능형 병합 (ID가 없는 데이터들만 추가)
+        setProducts(prev => {
+          const merged = [...remoteData.products];
+          prev.forEach(p => {
+            if (!merged.find(rp => rp.id === p.id)) merged.push(p);
           });
-        }
-        
-        const mergedRecords = Array.from(recordMap.values()).sort((a: any, b: any) => 
-          new Date(b.date).getTime() - new Date(a.date).getTime()
-        );
-        
-        setRecords(mergedRecords);
-        localStorage.setItem('i-mom-records', JSON.stringify(mergedRecords));
+          localStorage.setItem('i-mom-products', JSON.stringify(merged));
+          return merged;
+        });
 
-        // 2. 제품 정보 업데이트 (서버에 유효한 제품이 있을 때만)
-        if (data.products && Array.isArray(data.products) && data.products.length > 0) {
-          setProducts(data.products);
-          localStorage.setItem('i-mom-products', JSON.stringify(data.products));
-        }
-        
+        setRecords(prev => {
+          const merged = [...remoteData.records];
+          prev.forEach(r => {
+            if (!merged.find(rr => rr.id === r.id)) merged.push(r);
+          });
+          const sorted = merged.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+          localStorage.setItem('i-mom-records', JSON.stringify(sorted));
+          return sorted;
+        });
+
         setSyncStatus('connected');
         setLastSyncTime(new Date().toLocaleTimeString());
-      } else {
-        setSyncStatus('error');
       }
-    } catch (e) {
-      setSyncStatus('error');
-    }
-  }, [pushToCloud]);
+    } catch (e) { setSyncStatus('error'); }
+  }, [records, products, pushToCloud]);
 
-  // 초기 상태 로딩 및 자동 동기화 시작
   useEffect(() => {
-    // 1. 로컬 데이터 우선 로드
-    const savedProducts = localStorage.getItem('i-mom-products');
-    setProducts(savedProducts ? JSON.parse(savedProducts) : INITIAL_PRODUCTS);
+    loadLocalData();
+  }, [loadLocalData]);
 
-    const savedRecordsStr = localStorage.getItem('i-mom-records');
-    if (savedRecordsStr) setRecords(JSON.parse(savedRecordsStr));
-
-    const savedConfig = localStorage.getItem('i-mom-config');
-    if (savedConfig) setPharmacyConfig(JSON.parse(savedConfig));
-
-    // 2. 연동 코드 있으면 즉시 Pull
+  useEffect(() => {
     if (syncCode) {
       pullFromCloud(syncCode);
-      const interval = setInterval(() => pullFromCloud(syncCode), 60000); // 1분마다 자동 확인
+      const interval = setInterval(() => pullFromCloud(syncCode), 60000);
       return () => clearInterval(interval);
     }
   }, [syncCode, pullFromCloud]);
@@ -154,14 +126,11 @@ const App: React.FC = () => {
   };
 
   const handleUpdateProducts = (newProducts: Product[]) => {
-    setProducts(newProducts);
-    localStorage.setItem('i-mom-products', JSON.stringify(newProducts));
-    if (syncCode) pushToCloud(syncCode, records, newProducts);
-  };
-
-  const handleUpdateConfig = (newConfig: PharmacyConfig) => {
-    setPharmacyConfig(newConfig);
-    localStorage.setItem('i-mom-config', JSON.stringify(newConfig));
+    const validProducts = newProducts.length > 0 ? newProducts : INITIAL_PRODUCTS;
+    setProducts(validProducts);
+    localStorage.setItem('i-mom-products', JSON.stringify(validProducts));
+    // Fix: Swap validProducts and records to match pushToCloud(code, currentRecords, currentProducts) signature
+    if (syncCode) pushToCloud(syncCode, records, validProducts);
   };
 
   const handleSaveConsultation = (selectedProductIds: string[], recommendedNames: string[], totalPrice: number): ConsultationRecord => {
@@ -179,9 +148,8 @@ const App: React.FC = () => {
       counselingMethod: '태블릿 대면 상담',
       dispensingDays: 30
     };
-    
-    const updatedRecords = [newRecord, ...records];
-    handleUpdateRecords(updatedRecords);
+    const updated = [newRecord, ...records];
+    handleUpdateRecords(updated);
     return newRecord;
   };
 
@@ -194,67 +162,32 @@ const App: React.FC = () => {
             <h1 className="text-xl font-black text-slate-800 tracking-tighter">{pharmacyConfig.pharmacyName}</h1>
             {syncCode && (
                <div className="flex items-center gap-1.5">
-                 <div className={`w-1.5 h-1.5 rounded-full ${
-                    syncStatus === 'syncing' ? 'bg-amber-400 animate-pulse' : 
-                    syncStatus === 'connected' ? 'bg-teal-500' : 
-                    syncStatus === 'initializing' ? 'bg-blue-400' : 'bg-red-500'
-                 }`}></div>
+                 <div className={`w-1.5 h-1.5 rounded-full ${syncStatus === 'connected' ? 'bg-teal-500' : 'bg-red-500 animate-pulse'}`}></div>
                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
-                   {syncStatus === 'syncing' ? '데이터 동기화 중...' : 
-                    syncStatus === 'connected' ? `연동 활성화 (${lastSyncTime})` : 
-                    syncStatus === 'initializing' ? '초기 연동 설정 중...' : '연동 확인 필요'}
+                   {syncStatus === 'connected' ? `연동 활성화 (${lastSyncTime})` : '서버 연결 확인 중...'}
                  </span>
                </div>
             )}
           </div>
         </div>
         <div className="flex gap-2">
-           {syncCode && (
-             <button 
-               onClick={() => pushToCloud(syncCode, records, products)}
-               className="px-4 py-2 bg-teal-600 text-white text-[10px] font-black rounded-xl shadow-lg hover:bg-teal-700 active:scale-95 transition-all"
-             >
-               클라우드 강제 저장
-             </button>
-           )}
-           <button onClick={() => { if(syncCode) pullFromCloud(syncCode); }} className="w-10 h-10 bg-slate-50 border rounded-xl flex items-center justify-center hover:bg-white active:scale-90 transition-all shadow-sm">🔄</button>
-           <button onClick={() => isAdminAuthenticated ? setCurrentView('admin') : setShowAdminLogin(true)} className="w-10 h-10 bg-slate-50 border rounded-xl flex items-center justify-center hover:bg-white transition-all shadow-sm">⚙️</button>
+           <button onClick={() => syncCode && pullFromCloud(syncCode)} className="w-10 h-10 bg-slate-50 border rounded-xl flex items-center justify-center hover:bg-white active:scale-90 shadow-sm transition-all">🔄</button>
+           <button onClick={() => isAdminAuthenticated ? setCurrentView('admin') : setShowAdminLogin(true)} className="w-10 h-10 bg-slate-50 border rounded-xl flex items-center justify-center hover:bg-white shadow-sm">⚙️</button>
         </div>
       </header>
 
       <main className="flex-1 p-6">
         {currentView === 'home' && <HomeView onStart={() => setCurrentView('survey')} />}
-        {currentView === 'survey' && <SurveyView onComplete={(data) => {
-          setSurveyData({ ...data, pharmacistName: pharmacyConfig.managerName });
-          setCurrentView('recommendation');
-        }} products={products} />}
+        {currentView === 'survey' && <SurveyView onComplete={(data) => { setSurveyData(data); setCurrentView('recommendation'); }} products={products} />}
         {currentView === 'recommendation' && surveyData && (
-          <RecommendationView 
-            surveyData={surveyData} 
-            products={products} 
-            config={pharmacyConfig}
-            onSave={handleSaveConsultation} 
-            onBack={() => setCurrentView('survey')}
-            onReturnHome={() => setCurrentView('home')}
-          />
+          <RecommendationView surveyData={surveyData} products={products} config={pharmacyConfig} onSave={handleSaveConsultation} onBack={() => setCurrentView('survey')} onReturnHome={() => setCurrentView('home')} />
         )}
         {currentView === 'admin' && (
           <AdminPanel 
-            products={products} 
-            records={records} 
-            pharmacists={pharmacists}
-            config={pharmacyConfig}
-            syncCode={syncCode}
-            onUpdateProducts={handleUpdateProducts}
-            onUpdateRecords={handleUpdateRecords}
-            onUpdatePharmacists={setPharmacists}
-            onUpdateConfig={handleUpdateConfig}
-            onSetSyncCode={(code) => {
-              const cleaned = code.trim();
-              setSyncCode(cleaned);
-              localStorage.setItem('i-mom-sync-code', cleaned);
-              pullFromCloud(cleaned);
-            }}
+            products={products} records={records} pharmacists={pharmacists} config={pharmacyConfig} syncCode={syncCode}
+            onUpdateProducts={handleUpdateProducts} onUpdateRecords={handleUpdateRecords} onUpdatePharmacists={setPharmacists} onUpdateConfig={(c) => { setPharmacyConfig(c); localStorage.setItem('i-mom-config', JSON.stringify(c)); }}
+            onSetSyncCode={(c) => { setSyncCode(c); localStorage.setItem('i-mom-sync-code', c); pullFromCloud(c); }}
+            onForcePush={() => pushToCloud(syncCode, records, products)}
           />
         )}
       </main>
@@ -265,14 +198,10 @@ const App: React.FC = () => {
             <h3 className="text-xl font-black text-center mb-6">관리자 로그인</h3>
             <form onSubmit={(e) => {
               e.preventDefault();
-              if (passwordInput === '1234') {
-                setIsAdminAuthenticated(true);
-                setShowAdminLogin(false);
-                setCurrentView('admin');
-                setPasswordInput('');
-              } else alert('비밀번호가 틀렸습니다.');
+              if (passwordInput === '1234') { setIsAdminAuthenticated(true); setShowAdminLogin(false); setCurrentView('admin'); setPasswordInput(''); }
+              else alert('비밀번호가 틀렸습니다.');
             }} className="space-y-4">
-              <input type="password" autoFocus className="w-full p-4 bg-slate-50 border-2 rounded-2xl text-center text-2xl tracking-[0.5em] outline-none focus:border-teal-500" value={passwordInput} onChange={e => setPasswordInput(e.target.value)} placeholder="••••" />
+              <input type="password" autoFocus className="w-full p-4 bg-slate-50 border-2 rounded-2xl text-center text-2xl tracking-[0.5em] outline-none" value={passwordInput} onChange={e => setPasswordInput(e.target.value)} placeholder="••••" />
               <button type="submit" className="w-full py-4 bg-teal-600 text-white font-black rounded-2xl">확인</button>
               <button type="button" onClick={() => setShowAdminLogin(false)} className="w-full py-2 text-slate-400 text-sm font-bold">취소</button>
             </form>
