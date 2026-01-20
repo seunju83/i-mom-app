@@ -51,8 +51,8 @@ const HomeView: React.FC<HomeViewProps> = ({ onStart }) => {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8 w-full max-w-3xl px-8">
         {[
-          { icon: '🧑‍⚕️', title: '전문 약사 상담', desc: '송은주 약사 1:1 매칭' },
-          { icon: '📋', title: '법정 기록 관리', desc: '상담 기록 2년 안전 보관' },
+          { icon: '🧑‍⚕️', title: '전문 약사 상담', desc: '1:1 전담 약사 상담' },
+          { icon: '📋', title: '법정 기록 관리', desc: '상담 기록 3년 안전 보관' },
           { icon: '✅', title: '식약처 가이드라인', desc: '안전한 소분 판매 준수' }
         ].map((item, i) => (
           <div key={i} className="p-6 bg-white/60 backdrop-blur-sm rounded-3xl border border-[#F0E5D8] flex flex-col items-center gap-2">
