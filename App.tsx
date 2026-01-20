@@ -1,13 +1,12 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Product, ConsultationRecord, Pharmacist, PharmacyConfig, SurveyData } from './types';
 import { INITIAL_PRODUCTS, DISCLAIMER } from './constants';
 import HomeView from './components/HomeView';
 import SurveyView from './components/SurveyView';
 import RecommendationView from './components/RecommendationView';
 import AdminPanel from './components/AdminPanel';
-
-const SYNC_API_BASE = 'https://api.keyvalue.xyz';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<'home' | 'survey' | 'recommendation' | 'admin'>('home');
@@ -15,122 +14,144 @@ const App: React.FC = () => {
   const [records, setRecords] = useState<ConsultationRecord[]>([]);
   const [surveyData, setSurveyData] = useState<SurveyData | null>(null);
   const [pharmacists, setPharmacists] = useState<Pharmacist[]>([{ id: '1', name: '아이맘 약사', isActive: true }]);
-  const [pharmacyConfig, setPharmacyConfig] = useState<PharmacyConfig>({
-    pharmacyName: '아이맘약국',
-    currentPharmacistId: '1',
-    businessAddress: '세종시 보듬3로 150 아름행복타워 101호 아이맘약국',
-    managerName: '송은주'
+  const [pharmacyConfig, setPharmacyConfig] = useState<PharmacyConfig>(() => {
+    const saved = localStorage.getItem('i-mom-config');
+    return saved ? JSON.parse(saved) : {
+      pharmacyName: '아이맘약국',
+      currentPharmacistId: '1',
+      businessAddress: '세종시 보듬3로 150 아름행복타워 101호 아이맘약국',
+      managerName: '송은주'
+    };
   });
   
-  const [syncCode, setSyncCode] = useState<string>(localStorage.getItem('i-mom-sync-code') || '');
-  const [syncStatus, setSyncStatus] = useState<'connected' | 'error' | 'syncing' | 'idle'>('idle');
+  // Supabase 설정 상태 (localStorage에서 관리)
+  const [supabaseUrl, setSupabaseUrl] = useState(localStorage.getItem('i-mom-sb-url') || '');
+  const [supabaseKey, setSupabaseKey] = useState(localStorage.getItem('i-mom-sb-key') || '');
+  const [syncStatus, setSyncStatus] = useState<'connected' | 'offline' | 'error' | 'syncing'>('offline');
   const [lastSyncTime, setLastSyncTime] = useState<string>('');
-  
+
+  // Supabase 클라이언트 동적 생성
+  const supabase = useMemo(() => {
+    if (supabaseUrl && supabaseKey) {
+      try {
+        return createClient(supabaseUrl, supabaseKey);
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
+  }, [supabaseUrl, supabaseKey]);
+
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
 
-  // [데이터 보호 로직] 로컬 스토리지에 제품 정보가 없으면 기본값 강제 주입
-  const loadLocalData = useCallback(() => {
-    const savedProducts = localStorage.getItem('i-mom-products');
-    const parsedProducts = savedProducts ? JSON.parse(savedProducts) : INITIAL_PRODUCTS;
-    setProducts(parsedProducts.length > 0 ? parsedProducts : INITIAL_PRODUCTS);
-
-    const savedRecords = localStorage.getItem('i-mom-records');
-    if (savedRecords) setRecords(JSON.parse(savedRecords));
-
-    const savedConfig = localStorage.getItem('i-mom-config');
-    if (savedConfig) setPharmacyConfig(JSON.parse(savedConfig));
-  }, []);
-
-  const pushToCloud = useCallback(async (code: string, currentRecords: ConsultationRecord[], currentProducts: Product[]) => {
-    if (!code || code.trim().length < 3 || !navigator.onLine) return;
-    try {
-      setSyncStatus('syncing');
-      const payload = {
-        records: currentRecords,
-        products: currentProducts,
-        updatedAt: Date.now()
-      };
-      const response = await fetch(`${SYNC_API_BASE}/${code.trim()}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        mode: 'cors',
-        body: JSON.stringify(payload)
-      });
-      if (response.ok) {
-        setSyncStatus('connected');
-        setLastSyncTime(new Date().toLocaleTimeString());
-      }
-    } catch (e) { setSyncStatus('error'); }
-  }, []);
-
-  const pullFromCloud = useCallback(async (code: string) => {
-    if (!code || code.trim().length < 3 || !navigator.onLine) return;
-    try {
-      setSyncStatus('syncing');
-      const response = await fetch(`${SYNC_API_BASE}/${code.trim()}?t=${Date.now()}`, { mode: 'cors' });
-      
-      // 1. 서버에 데이터가 없으면(404) 내 현재 데이터를 서버로 즉시 전송 (Seeding)
-      if (response.status === 404) {
-        await pushToCloud(code, records, products);
-        return;
-      }
-
-      if (response.ok) {
-        const remoteData = await response.json();
-        if (!remoteData || !remoteData.products) return;
-
-        // 2. 지능형 병합 (ID가 없는 데이터들만 추가)
-        setProducts(prev => {
-          const merged = [...remoteData.products];
-          prev.forEach(p => {
-            if (!merged.find(rp => rp.id === p.id)) merged.push(p);
-          });
-          localStorage.setItem('i-mom-products', JSON.stringify(merged));
-          return merged;
-        });
-
-        setRecords(prev => {
-          const merged = [...remoteData.records];
-          prev.forEach(r => {
-            if (!merged.find(rr => rr.id === r.id)) merged.push(r);
-          });
-          const sorted = merged.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-          localStorage.setItem('i-mom-records', JSON.stringify(sorted));
-          return sorted;
-        });
-
-        setSyncStatus('connected');
-        setLastSyncTime(new Date().toLocaleTimeString());
-      }
-    } catch (e) { setSyncStatus('error'); }
-  }, [records, products, pushToCloud]);
-
-  useEffect(() => {
-    loadLocalData();
-  }, [loadLocalData]);
-
-  useEffect(() => {
-    if (syncCode) {
-      pullFromCloud(syncCode);
-      const interval = setInterval(() => pullFromCloud(syncCode), 60000);
-      return () => clearInterval(interval);
+  // 1. 데이터 로딩 (DB <-> Local 병합)
+  const syncData = useCallback(async () => {
+    if (!supabase) {
+      setSyncStatus('offline');
+      // 오프라인일 때는 로컬 데이터만 로드
+      const localProducts = localStorage.getItem('i-mom-products');
+      const localRecords = localStorage.getItem('i-mom-records');
+      setProducts(localProducts ? JSON.parse(localProducts) : INITIAL_PRODUCTS);
+      setRecords(localRecords ? JSON.parse(localRecords) : []);
+      return;
     }
-  }, [syncCode, pullFromCloud]);
 
-  const handleUpdateRecords = (newRecords: ConsultationRecord[]) => {
+    try {
+      setSyncStatus('syncing');
+
+      // (1) 제품 데이터 동기화
+      const { data: dbProducts, error: pError } = await supabase.from('products').select('*');
+      if (pError) throw pError;
+
+      let finalProducts = [...products];
+      if (dbProducts && dbProducts.length > 0) {
+        finalProducts = dbProducts;
+      } else if (products.length > 0) {
+        // 서버에 데이터가 없으면 로컬 데이터를 서버로 전송 (Seeding)
+        await supabase.from('products').upsert(products);
+        finalProducts = products;
+      } else {
+        finalProducts = INITIAL_PRODUCTS;
+      }
+      setProducts(finalProducts);
+      localStorage.setItem('i-mom-products', JSON.stringify(finalProducts));
+
+      // (2) 상담 기록 동기화
+      const { data: dbRecords, error: rError } = await supabase.from('consultations').select('*').order('date', { ascending: false });
+      if (rError) throw rError;
+
+      let finalRecords = [...records];
+      if (dbRecords) {
+        // 클라우드 데이터와 로컬 데이터 병합 (중복 제거)
+        const merged = [...dbRecords];
+        records.forEach(local => {
+          if (!merged.find(remote => remote.id === local.id)) merged.push(local);
+        });
+        finalRecords = merged.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        
+        // 병합된 결과를 다시 클라우드에 업로드 (동기화)
+        if (finalRecords.length > dbRecords.length) {
+          await supabase.from('consultations').upsert(finalRecords);
+        }
+      }
+      setRecords(finalRecords);
+      localStorage.setItem('i-mom-records', JSON.stringify(finalRecords));
+
+      setSyncStatus('connected');
+      setLastSyncTime(new Date().toLocaleTimeString());
+    } catch (e) {
+      console.error('Sync Error:', e);
+      setSyncStatus('error');
+    }
+  }, [supabase, products, records]);
+
+  // 초기 로딩
+  useEffect(() => {
+    const localProducts = localStorage.getItem('i-mom-products');
+    const localRecords = localStorage.getItem('i-mom-records');
+    if (localProducts) setProducts(JSON.parse(localProducts));
+    else setProducts(INITIAL_PRODUCTS);
+    if (localRecords) setRecords(JSON.parse(localRecords));
+
+    if (supabase) {
+      syncData();
+    }
+  }, [supabase]); // supabase 클라이언트가 준비되면 동기화 시작
+
+  // 2. 상담 기록 업데이트 로직
+  const handleUpdateRecords = async (newRecords: ConsultationRecord[]) => {
     setRecords(newRecords);
     localStorage.setItem('i-mom-records', JSON.stringify(newRecords));
-    if (syncCode) pushToCloud(syncCode, newRecords, products);
+    
+    if (supabase) {
+      try {
+        setSyncStatus('syncing');
+        const { error } = await supabase.from('consultations').upsert(newRecords);
+        if (error) throw error;
+        setSyncStatus('connected');
+        setLastSyncTime(new Date().toLocaleTimeString());
+      } catch (e) { setSyncStatus('error'); }
+    }
   };
 
-  const handleUpdateProducts = (newProducts: Product[]) => {
+  // 3. 제품 정보 업데이트 로직
+  const handleUpdateProducts = async (newProducts: Product[]) => {
     const validProducts = newProducts.length > 0 ? newProducts : INITIAL_PRODUCTS;
     setProducts(validProducts);
     localStorage.setItem('i-mom-products', JSON.stringify(validProducts));
-    // Fix: Swap validProducts and records to match pushToCloud(code, currentRecords, currentProducts) signature
-    if (syncCode) pushToCloud(syncCode, records, validProducts);
+    
+    if (supabase) {
+      try {
+        setSyncStatus('syncing');
+        // 제품 전체를 덮어씌움 (Upsert)
+        const { error } = await supabase.from('products').upsert(validProducts);
+        if (error) throw error;
+        setSyncStatus('connected');
+        setLastSyncTime(new Date().toLocaleTimeString());
+      } catch (e) { setSyncStatus('error'); }
+    }
   };
 
   const handleSaveConsultation = (selectedProductIds: string[], recommendedNames: string[], totalPrice: number): ConsultationRecord => {
@@ -153,6 +174,14 @@ const App: React.FC = () => {
     return newRecord;
   };
 
+  const handleSetSupabaseConfig = (url: string, key: string) => {
+    setSupabaseUrl(url);
+    setSupabaseKey(key);
+    localStorage.setItem('i-mom-sb-url', url);
+    localStorage.setItem('i-mom-sb-key', key);
+    alert('DB 설정이 저장되었습니다. 연동을 시도합니다.');
+  };
+
   return (
     <div className="min-h-screen flex flex-col max-w-[1024px] mx-auto bg-white shadow-2xl relative">
       <header className="bg-white/95 backdrop-blur-md p-6 sticky top-0 z-50 flex justify-between items-center border-b border-slate-100">
@@ -160,18 +189,22 @@ const App: React.FC = () => {
           <div className="w-10 h-10 rounded-full bg-teal-600 flex items-center justify-center text-white font-black text-[10px] shadow-lg">아이맘</div>
           <div>
             <h1 className="text-xl font-black text-slate-800 tracking-tighter">{pharmacyConfig.pharmacyName}</h1>
-            {syncCode && (
-               <div className="flex items-center gap-1.5">
-                 <div className={`w-1.5 h-1.5 rounded-full ${syncStatus === 'connected' ? 'bg-teal-500' : 'bg-red-500 animate-pulse'}`}></div>
-                 <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
-                   {syncStatus === 'connected' ? `연동 활성화 (${lastSyncTime})` : '서버 연결 확인 중...'}
-                 </span>
-               </div>
-            )}
+            <div className="flex items-center gap-1.5">
+              <div className={`w-1.5 h-1.5 rounded-full ${
+                syncStatus === 'connected' ? 'bg-teal-500' : 
+                syncStatus === 'syncing' ? 'bg-blue-400 animate-spin' : 
+                syncStatus === 'error' ? 'bg-red-500' : 'bg-slate-300'
+              }`}></div>
+              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                {syncStatus === 'connected' ? `클라우드 동기화 완료 (${lastSyncTime})` : 
+                 syncStatus === 'syncing' ? '데이터 맞추는 중...' :
+                 syncStatus === 'error' ? '서버 연결 오류' : '오프라인 (로컬 저장 중)'}
+              </span>
+            </div>
           </div>
         </div>
         <div className="flex gap-2">
-           <button onClick={() => syncCode && pullFromCloud(syncCode)} className="w-10 h-10 bg-slate-50 border rounded-xl flex items-center justify-center hover:bg-white active:scale-90 shadow-sm transition-all">🔄</button>
+           <button onClick={syncData} className="w-10 h-10 bg-slate-50 border rounded-xl flex items-center justify-center hover:bg-white active:scale-90 shadow-sm transition-all text-sm">🔄</button>
            <button onClick={() => isAdminAuthenticated ? setCurrentView('admin') : setShowAdminLogin(true)} className="w-10 h-10 bg-slate-50 border rounded-xl flex items-center justify-center hover:bg-white shadow-sm">⚙️</button>
         </div>
       </header>
@@ -184,10 +217,12 @@ const App: React.FC = () => {
         )}
         {currentView === 'admin' && (
           <AdminPanel 
-            products={products} records={records} pharmacists={pharmacists} config={pharmacyConfig} syncCode={syncCode}
+            products={products} records={records} pharmacists={pharmacists} config={pharmacyConfig} syncCode={""}
             onUpdateProducts={handleUpdateProducts} onUpdateRecords={handleUpdateRecords} onUpdatePharmacists={setPharmacists} onUpdateConfig={(c) => { setPharmacyConfig(c); localStorage.setItem('i-mom-config', JSON.stringify(c)); }}
-            onSetSyncCode={(c) => { setSyncCode(c); localStorage.setItem('i-mom-sync-code', c); pullFromCloud(c); }}
-            onForcePush={() => pushToCloud(syncCode, records, products)}
+            onSetSyncCode={() => {}}
+            onForcePush={syncData}
+            sbConfig={{ url: supabaseUrl, key: supabaseKey }}
+            onSetSbConfig={handleSetSupabaseConfig}
           />
         )}
       </main>
