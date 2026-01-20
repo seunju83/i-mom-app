@@ -62,9 +62,10 @@ const App: React.FC = () => {
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
 
-  // [Push] 제품 + 기록 통합 암호화 전송
+  // [Push] 모든 데이터를 하나로 묶어 전송 (제품 정보 + 이미지 + 상담 기록)
   const pushToCloud = useCallback(async (code: string, currentRecords: ConsultationRecord[], currentProducts: Product[]) => {
     if (!code) return;
+    setIsSyncing(true);
     try {
       const payload = JSON.stringify({
         records: currentRecords,
@@ -72,7 +73,7 @@ const App: React.FC = () => {
         updatedAt: new Date().toISOString()
       });
       const encryptedPayload = await encryptData(payload, code);
-      if (!encryptedPayload) return;
+      if (!encryptedPayload) throw new Error("Encryption failed");
 
       await fetch(`${SYNC_API_BASE}/${code}`, {
         method: 'POST',
@@ -82,10 +83,12 @@ const App: React.FC = () => {
       setLastSyncTime(new Date().toLocaleTimeString());
     } catch (err) {
       console.error('Cloud Sync Failed:', err);
+    } finally {
+      setIsSyncing(false);
     }
   }, []);
 
-  // [Pull] 제품 + 기록 통합 복호화 수신
+  // [Pull] 서버에서 최신 데이터 가져와서 로컬과 병합
   const pullFromCloud = useCallback(async (code: string) => {
     if (!code) return;
     setIsSyncing(true);
@@ -98,7 +101,13 @@ const App: React.FC = () => {
           if (decryptedJson) {
             const cloudData = JSON.parse(decryptedJson);
             
-            // 기록 업데이트 (병합 및 정렬)
+            // 1. 제품 정보 동기화 (기기 불러오기 이미지가 포함된 최신 정보)
+            if (cloudData.products) {
+              setProducts(cloudData.products);
+              localStorage.setItem('i-mom-products', JSON.stringify(cloudData.products));
+            }
+
+            // 2. 상담 기록 동기화 (기존 로컬 기록과 병합하여 유실 방지)
             if (cloudData.records) {
               const localRecords = JSON.parse(localStorage.getItem('i-mom-records') || '[]');
               const recordMap = new Map();
@@ -106,12 +115,6 @@ const App: React.FC = () => {
               const mergedRecords = Array.from(recordMap.values()).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
               setRecords(mergedRecords);
               localStorage.setItem('i-mom-records', JSON.stringify(mergedRecords));
-            }
-
-            // 제품 정보 업데이트 (최신 클라우드 정보 우선)
-            if (cloudData.products) {
-              setProducts(cloudData.products);
-              localStorage.setItem('i-mom-products', JSON.stringify(cloudData.products));
             }
             
             setLastSyncTime(new Date().toLocaleTimeString());
@@ -125,13 +128,11 @@ const App: React.FC = () => {
     }
   }, []);
 
+  // 초기 로드 시 실행
   useEffect(() => {
     const savedProducts = localStorage.getItem('i-mom-products');
     if (savedProducts) setProducts(JSON.parse(savedProducts));
-    else {
-      setProducts(INITIAL_PRODUCTS);
-      localStorage.setItem('i-mom-products', JSON.stringify(INITIAL_PRODUCTS));
-    }
+    else setProducts(INITIAL_PRODUCTS);
 
     const savedRecordsStr = localStorage.getItem('i-mom-records');
     if (savedRecordsStr) setRecords(JSON.parse(savedRecordsStr));
@@ -142,14 +143,14 @@ const App: React.FC = () => {
     if (syncCode) pullFromCloud(syncCode);
   }, [syncCode, pullFromCloud]);
 
-  // 기록 업데이트 (저장/삭제 시 호출)
+  // 기록 업데이트 및 서버 전송
   const handleUpdateRecords = useCallback((newRecords: ConsultationRecord[]) => {
     setRecords(newRecords);
     localStorage.setItem('i-mom-records', JSON.stringify(newRecords));
     if (syncCode) pushToCloud(syncCode, newRecords, products);
   }, [syncCode, products, pushToCloud]);
 
-  // 제품 업데이트 (수정/삭제 시 호출)
+  // 제품 업데이트 및 서버 전송 (이미지 포함)
   const handleUpdateProducts = useCallback((newProducts: Product[]) => {
     setProducts(newProducts);
     localStorage.setItem('i-mom-products', JSON.stringify(newProducts));
@@ -200,11 +201,17 @@ const App: React.FC = () => {
             )}
           </div>
         </div>
-        <button onClick={() => isAdminAuthenticated ? setCurrentView('admin') : setShowAdminLogin(true)} className="w-10 h-10 bg-slate-50 border rounded-xl flex items-center justify-center hover:bg-slate-100 transition-all">⚙️</button>
+        <div className="flex gap-2">
+           {syncCode && <button onClick={() => pullFromCloud(syncCode)} className="w-10 h-10 bg-slate-50 border rounded-xl flex items-center justify-center hover:bg-slate-100 transition-all" title="새로고침">🔄</button>}
+           <button onClick={() => isAdminAuthenticated ? setCurrentView('admin') : setShowAdminLogin(true)} className="w-10 h-10 bg-slate-50 border rounded-xl flex items-center justify-center hover:bg-slate-100 transition-all">⚙️</button>
+        </div>
       </header>
 
       <main className="flex-1 p-6">
-        {currentView === 'home' && <HomeView onStart={() => setCurrentView('survey')} />}
+        {currentView === 'home' && <HomeView onStart={() => {
+           if(syncCode) pullFromCloud(syncCode); // 상담 시작 전 최신 데이터 확인
+           setCurrentView('survey');
+        }} />}
         {currentView === 'survey' && <SurveyView onComplete={(data) => {
           setSurveyData({ ...data, pharmacistName: pharmacyConfig.managerName });
           setCurrentView('recommendation');
