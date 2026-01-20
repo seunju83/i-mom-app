@@ -56,7 +56,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!editingProduct || !e.target.files) return;
     
-    const files = Array.from(e.target.files);
+    // Fix: Explicitly cast to File[] to avoid 'unknown' type error in reader.readAsDataURL
+    const files = Array.from(e.target.files) as File[];
     files.forEach(file => {
       const reader = new FileReader();
       reader.onloadend = () => {
