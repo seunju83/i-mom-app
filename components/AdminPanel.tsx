@@ -34,8 +34,9 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     );
   }, [records, searchQuery]);
 
+  // 기록 삭제 버튼 로직
   const handleDeleteRecord = (id: string) => {
-    if (window.confirm('정말 이 상담 기록을 삭제하시겠습니까? (이 작업은 되돌릴 수 없으며 다른 기기에서도 사라집니다.)')) {
+    if (window.confirm('정말 이 상담 기록을 삭제하시겠습니까?\n이 작업은 되돌릴 수 없으며 다른 기기에서도 사라집니다.')) {
       onUpdateRecords(records.filter(r => r.id !== id));
     }
   };
@@ -76,7 +77,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                </span>
              </div>
              <div className="bg-teal-900/30 p-5 rounded-2xl border border-teal-500/30 text-[11px] text-teal-200 leading-relaxed font-medium">
-               💡 <b>사용 팁:</b> 기기간 연동이 원활하지 않을 경우, 우측 상단의 <b>🔄 새로고침</b> 버튼을 누르거나 인터넷 연결 상태를 확인해 주세요.
+               💡 <b>사용 팁:</b> 기기간 연동 코드를 동일하게 입력하면 상담 기록이 공유됩니다.<br/>
+               데이터가 잘 안 보이면 헤더의 <b>지금 데이터 올리기</b> 버튼을 눌러보세요.
              </div>
              <div className="space-y-2">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">우리 약국 전용 연동 코드</label>
@@ -84,7 +86,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                   type="text" 
                   value={syncCode} 
                   onChange={e => onSetSyncCode(e.target.value)}
-                  placeholder="예: imom-sejong-1234"
+                  placeholder="예: imom-sejong-77"
                   className="w-full p-5 bg-white/10 border-2 border-white/10 rounded-2xl outline-none focus:border-teal-500 font-black text-white text-lg"
                 />
              </div>
@@ -156,10 +158,16 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                 ) : filteredRecords.map(r => (
                   <tr key={r.id} className="hover:bg-slate-50 transition-colors">
                     <td className="p-4 pl-6 text-xs">{new Date(r.date).toLocaleDateString()}</td>
-                    <td className="p-4 text-slate-900">{r.customerName}</td>
+                    <td className="p-4 text-slate-900 font-black">{r.customerName}</td>
                     <td className="p-4 flex items-center justify-center gap-2">
                       <button onClick={() => setViewingRecord(r)} className="px-4 py-2 bg-teal-600 text-white rounded-xl text-[10px] font-black shadow-md">상세보기</button>
-                      <button onClick={() => handleDeleteRecord(r.id)} className="w-8 h-8 flex items-center justify-center bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all">🗑️</button>
+                      <button 
+                        onClick={() => handleDeleteRecord(r.id)} 
+                        className="w-8 h-8 flex items-center justify-center bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all shadow-sm"
+                        title="기록 삭제"
+                      >
+                        🗑️
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -269,7 +277,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                 </div>
               </div>
 
-              <button type="submit" className="w-full py-5 bg-teal-600 text-white font-black rounded-3xl shadow-xl active:scale-95 transition-all sticky bottom-0">저장 및 기기 연동</button>
+              <button type="submit" className="w-full py-5 bg-teal-600 text-white font-black rounded-3xl shadow-xl active:scale-95 transition-all sticky bottom-0">제품 저장 및 연동</button>
             </form>
           </div>
         </div>
