@@ -15,7 +15,7 @@ const App: React.FC = () => {
   const [surveyData, setSurveyData] = useState<SurveyData | null>(null);
   const [pharmacists, setPharmacists] = useState<Pharmacist[]>([{ id: '1', name: '아이맘 약사', isActive: true }]);
   const [pharmacyConfig, setPharmacyConfig] = useState<PharmacyConfig>(() => {
-    const saved = localStorage.getItem('i-mom-config');
+    const saved = localStorage.getItem('i-mom-config-v3');
     return saved ? JSON.parse(saved) : {
       pharmacyName: '아이맘약국',
       currentPharmacistId: '1',
@@ -24,29 +24,29 @@ const App: React.FC = () => {
     };
   });
   
-  // Supabase 설정 (로컬 스토리지에서 직접 관리)
-  const [supabaseUrl, setSupabaseUrl] = useState(localStorage.getItem('i-mom-sb-url-v2') || '');
-  const [supabaseKey, setSupabaseKey] = useState(localStorage.getItem('i-mom-sb-key-v2') || '');
+  // 캐시 충돌 방지를 위해 v3 전용 키 사용
+  const [sbUrl, setSbUrl] = useState(localStorage.getItem('sb_url_v3') || '');
+  const [sbKey, setSbKey] = useState(localStorage.getItem('sb_key_v3') || '');
   const [syncStatus, setSyncStatus] = useState<'connected' | 'offline' | 'error' | 'syncing'>('offline');
   const [lastSyncTime, setLastSyncTime] = useState<string>('');
 
-  const supabase = useMemo(() => {
-    if (supabaseUrl && supabaseKey) {
-      try { return createClient(supabaseUrl, supabaseKey); } 
+  const supabaseClient = useMemo(() => {
+    if (sbUrl && sbKey) {
+      try { return createClient(sbUrl, sbKey); } 
       catch (e) { return null; }
     }
     return null;
-  }, [supabaseUrl, supabaseKey]);
+  }, [sbUrl, sbKey]);
 
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
 
-  const syncData = useCallback(async () => {
-    if (!supabase) {
+  const fetchSync = useCallback(async () => {
+    if (!supabaseClient) {
       setSyncStatus('offline');
-      const localProducts = localStorage.getItem('i-mom-products');
-      const localRecords = localStorage.getItem('i-mom-records');
+      const localProducts = localStorage.getItem('i-mom-products-v3');
+      const localRecords = localStorage.getItem('i-mom-records-v3');
       setProducts(localProducts ? JSON.parse(localProducts) : INITIAL_PRODUCTS);
       setRecords(localRecords ? JSON.parse(localRecords) : []);
       return;
@@ -54,22 +54,22 @@ const App: React.FC = () => {
 
     try {
       setSyncStatus('syncing');
-      // 제품 데이터 동기화
-      const { data: dbProducts, error: pError } = await supabase.from('products').select('*');
-      if (dbProducts && dbProducts.length > 0) {
-        setProducts(dbProducts);
-        localStorage.setItem('i-mom-products', JSON.stringify(dbProducts));
-      } else if (!pError && products.length > 0) {
-        await supabase.from('products').upsert(products);
-      } else if (!dbProducts || dbProducts.length === 0) {
+      // 제품 데이터 가져오기
+      const { data: dbP } = await supabaseClient.from('products').select('*');
+      if (dbP && dbP.length > 0) {
+        setProducts(dbP);
+        localStorage.setItem('i-mom-products-v3', JSON.stringify(dbP));
+      } else if (products.length > 0) {
+        await supabaseClient.from('products').upsert(products);
+      } else {
         setProducts(INITIAL_PRODUCTS);
       }
 
-      // 상담 기록 동기화
-      const { data: dbRecords } = await supabase.from('consultations').select('*').order('date', { ascending: false });
-      if (dbRecords) {
-        setRecords(dbRecords);
-        localStorage.setItem('i-mom-records', JSON.stringify(dbRecords));
+      // 상담 기록 가져오기
+      const { data: dbR } = await supabaseClient.from('consultations').select('*').order('date', { ascending: false });
+      if (dbR) {
+        setRecords(dbR);
+        localStorage.setItem('i-mom-records-v3', JSON.stringify(dbR));
       }
 
       setSyncStatus('connected');
@@ -77,36 +77,31 @@ const App: React.FC = () => {
     } catch (e) {
       setSyncStatus('error');
     }
-  }, [supabase, products.length]);
+  }, [supabaseClient, products.length]);
 
   useEffect(() => {
-    syncData();
-  }, [supabase, syncData]);
+    fetchSync();
+  }, [supabaseClient, fetchSync]);
 
   const handleUpdateRecords = async (newRecords: ConsultationRecord[]) => {
     setRecords(newRecords);
-    localStorage.setItem('i-mom-records', JSON.stringify(newRecords));
-    if (supabase) {
-      await supabase.from('consultations').upsert(newRecords);
-      setSyncStatus('connected');
-    }
+    localStorage.setItem('i-mom-records-v3', JSON.stringify(newRecords));
+    if (supabaseClient) await supabaseClient.from('consultations').upsert(newRecords);
   };
 
   const handleUpdateProducts = async (newProducts: Product[]) => {
     setProducts(newProducts);
-    localStorage.setItem('i-mom-products', JSON.stringify(newProducts));
-    if (supabase) {
-      await supabase.from('products').upsert(newProducts);
-      setSyncStatus('connected');
-    }
+    localStorage.setItem('i-mom-products-v3', JSON.stringify(newProducts));
+    if (supabaseClient) await supabaseClient.from('products').upsert(newProducts);
   };
 
-  const handleSetSupabaseConfig = (url: string, key: string) => {
-    setSupabaseUrl(url);
-    setSupabaseKey(key);
-    localStorage.setItem('i-mom-sb-url-v2', url);
-    localStorage.setItem('i-mom-sb-key-v2', key);
-    alert('새로운 연동 설정이 적용되었습니다.');
+  const handleSetSbConfig = (url: string, key: string) => {
+    setSbUrl(url);
+    setSbKey(key);
+    localStorage.setItem('sb_url_v3', url);
+    localStorage.setItem('sb_key_v3', key);
+    alert('설정이 저장되었습니다. 페이지가 새로고침됩니다.');
+    window.location.reload(); // 강제 새로고침으로 캐시 무력화
   };
 
   return (
@@ -117,18 +112,18 @@ const App: React.FC = () => {
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-xl font-black text-slate-800 tracking-tighter">{pharmacyConfig.pharmacyName}</h1>
-              <span className="px-2 py-0.5 bg-teal-100 text-teal-700 text-[8px] font-black rounded-md uppercase">v2.1 Cloud</span>
+              <span className="px-2 py-0.5 bg-orange-100 text-orange-600 text-[8px] font-black rounded-md uppercase">Final v3.0</span>
             </div>
             <div className="flex items-center gap-1.5">
               <div className={`w-1.5 h-1.5 rounded-full ${syncStatus === 'connected' ? 'bg-teal-500' : 'bg-slate-300'}`}></div>
               <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
-                {syncStatus === 'connected' ? `동기화 완료 (${lastSyncTime})` : '설정 필요 (오프라인)'}
+                {syncStatus === 'connected' ? `클라우드 연결됨 (${lastSyncTime})` : '오프라인 (설정필요)'}
               </span>
             </div>
           </div>
         </div>
         <div className="flex gap-2">
-           <button onClick={syncData} className="w-10 h-10 bg-slate-50 border rounded-xl flex items-center justify-center hover:bg-white text-sm">🔄</button>
+           <button onClick={fetchSync} className="w-10 h-10 bg-slate-50 border rounded-xl flex items-center justify-center hover:bg-white text-sm">🔄</button>
            <button onClick={() => isAdminAuthenticated ? setCurrentView('admin') : setShowAdminLogin(true)} className="w-10 h-10 bg-slate-50 border rounded-xl flex items-center justify-center hover:bg-white shadow-sm">⚙️</button>
         </div>
       </header>
@@ -149,10 +144,10 @@ const App: React.FC = () => {
         {currentView === 'admin' && (
           <AdminPanel 
             products={products} records={records} pharmacists={pharmacists} config={pharmacyConfig}
-            onUpdateProducts={handleUpdateProducts} onUpdateRecords={handleUpdateRecords} onUpdatePharmacists={setPharmacists} onUpdateConfig={(c) => { setPharmacyConfig(c); localStorage.setItem('i-mom-config', JSON.stringify(c)); }}
-            onForcePush={syncData}
-            sbConfig={{ url: supabaseUrl, key: supabaseKey }}
-            onSetSbConfig={handleSetSupabaseConfig}
+            onUpdateProducts={handleUpdateProducts} onUpdateRecords={handleUpdateRecords} onUpdatePharmacists={setPharmacists} onUpdateConfig={(c) => { setPharmacyConfig(c); localStorage.setItem('i-mom-config-v3', JSON.stringify(c)); }}
+            onForcePush={fetchSync}
+            sbConfig={{ url: sbUrl, key: sbKey }}
+            onSetSbConfig={handleSetSbConfig}
           />
         )}
       </main>
