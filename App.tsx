@@ -7,34 +7,7 @@ import SurveyView from './components/SurveyView';
 import RecommendationView from './components/RecommendationView';
 import AdminPanel from './components/AdminPanel';
 
-// 더 안정적인 엔드포인트 구조 사용
 const SYNC_API_BASE = 'https://api.keyvalue.xyz';
-
-const compressImageExtreme = (base64Str: string): Promise<string> => {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.src = base64Str;
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      const MAX_WIDTH = 400; 
-      let width = img.width;
-      let height = img.height;
-      if (width > MAX_WIDTH) {
-        height *= MAX_WIDTH / width;
-        width = MAX_WIDTH;
-      }
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.imageSmoothingEnabled = true;
-        ctx.drawImage(img, 0, 0, width, height);
-      }
-      resolve(canvas.toDataURL('image/jpeg', 0.5));
-    };
-    img.onerror = () => resolve(base64Str);
-  });
-};
 
 const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<'home' | 'survey' | 'recommendation' | 'admin'>('home');
@@ -51,107 +24,100 @@ const App: React.FC = () => {
   
   const [syncCode, setSyncCode] = useState<string>(localStorage.getItem('i-mom-sync-code') || '');
   const [syncStatus, setSyncStatus] = useState<'connected' | 'error' | 'syncing' | 'idle'>('idle');
-  const [syncErrorMsg, setSyncErrorMsg] = useState<string>('');
+  const [lastSyncTime, setLastSyncTime] = useState<string>('');
+  const [syncErrorDetail, setSyncErrorDetail] = useState<string>('');
   
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
 
-  const pushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // [Pull] 클라우드 데이터 가져오기 (에러 핸들링 대폭 강화)
+  // [Pull] 클라우드에서 데이터를 가져와서 로컬과 지능적으로 병합
   const pullFromCloud = useCallback(async (code: string) => {
     if (!code || code.trim().length < 2) return;
     const targetCode = code.trim();
     
     try {
       setSyncStatus('syncing');
-      const response = await fetch(`${SYNC_API_BASE}/${targetCode}`, { 
+      const response = await fetch(`${SYNC_API_BASE}/${targetCode}?t=${Date.now()}`, { 
         method: 'GET',
-        headers: { 'Accept': 'application/json, text/plain, */*' },
-        cache: 'no-store'
+        headers: { 'Accept': 'application/json' }
       });
       
       if (response.ok) {
         const text = await response.text();
         if (text && text.trim().startsWith('{')) {
-          try {
-            const data = JSON.parse(text);
+          const data = JSON.parse(text);
+          
+          // 상담 기록 병합 (로컬 데이터와 서버 데이터 중 없는 것만 추가)
+          if (data.records) {
+            const localRecords: ConsultationRecord[] = JSON.parse(localStorage.getItem('i-mom-records') || '[]');
+            const recordMap = new Map();
+            localRecords.forEach(r => recordMap.set(r.id, r));
+            data.records.forEach((r: ConsultationRecord) => {
+              // 서버 데이터가 로컬에 없으면 추가
+              if (!recordMap.has(r.id)) recordMap.set(r.id, r);
+            });
             
-            // 데이터 병합 로직
-            if (data.records) {
-              const localRecords = JSON.parse(localStorage.getItem('i-mom-records') || '[]');
-              const recordMap = new Map();
-              localRecords.forEach((r: any) => recordMap.set(r.id, r));
-              data.records.forEach((r: any) => recordMap.set(r.id, r));
-              const merged = Array.from(recordMap.values()).sort((a: any, b: any) => 
-                new Date(b.date).getTime() - new Date(a.date).getTime()
-              );
-              setRecords(merged);
-              localStorage.setItem('i-mom-records', JSON.stringify(merged));
-            }
+            const merged = Array.from(recordMap.values()).sort((a: any, b: any) => 
+              new Date(b.date).getTime() - new Date(a.date).getTime()
+            );
+            
+            setRecords(merged);
+            localStorage.setItem('i-mom-records', JSON.stringify(merged));
+          }
 
-            if (data.products) {
-              setProducts(data.products);
-              localStorage.setItem('i-mom-products', JSON.stringify(data.products));
-            }
-          } catch (parseError) {
-            console.error('JSON Parse Error', parseError);
+          if (data.products && data.products.length > 0) {
+            setProducts(data.products);
+            localStorage.setItem('i-mom-products', JSON.stringify(data.products));
           }
         }
         setSyncStatus('connected');
-        setSyncErrorMsg('');
+        setSyncErrorDetail('');
+        setLastSyncTime(new Date().toLocaleTimeString());
       } else if (response.status === 404) {
-        // 404는 서버에 아직 해당 코드가 없다는 뜻이므로 '연결 성공(신규)'으로 간주
-        console.log('New Sync Channel Identified');
+        // 데이터가 없는 경우(신규 코드)는 에러가 아님
         setSyncStatus('connected');
-        setSyncErrorMsg('새로운 연동 채널이 생성되었습니다.');
+        setSyncErrorDetail('신규 채널 연결됨');
       } else {
-        setSyncStatus('error');
-        setSyncErrorMsg(`서버 응답 오류 (${response.status})`);
+        throw new Error(`서버 응답 오류: ${response.status}`);
       }
     } catch (e) {
-      console.error('Pull Failure:', e);
+      console.error('Pull Error:', e);
       setSyncStatus('error');
-      setSyncErrorMsg('네트워크 연결이 원활하지 않습니다.');
+      setSyncErrorDetail('서버 연결 실패 (Wi-Fi 확인 권장)');
     }
   }, []);
 
-  // [Push] 클라우드로 데이터 전송
+  // [Push] 데이터를 클라우드로 전송
   const pushToCloud = useCallback(async (code: string, currentRecords: ConsultationRecord[], currentProducts: Product[]) => {
     if (!code || code.trim().length < 2) return;
     const targetCode = code.trim();
 
     try {
-      setSyncStatus('syncing');
       const payload = JSON.stringify({
-        records: currentRecords.slice(0, 30), // 전송 안정성을 위해 최근 30개만
+        records: currentRecords.slice(0, 100), // 최근 100건까지 동기화 보장
         products: currentProducts,
-        lastUpdated: new Date().toISOString()
+        timestamp: Date.now()
       });
 
-      // 서버 전송 (POST 사용)
       const response = await fetch(`${SYNC_API_BASE}/${targetCode}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'text/plain' }, // keyvalue.xyz는 plain text를 선호함
+        headers: { 'Content-Type': 'text/plain' },
         body: payload
       });
-      
+
       if (response.ok) {
         setSyncStatus('connected');
-        setSyncErrorMsg('');
+        setSyncErrorDetail('');
       } else {
         setSyncStatus('error');
-        setSyncErrorMsg('데이터 업로드 실패');
+        setSyncErrorDetail('데이터 업로드 실패');
       }
     } catch (e) {
-      console.error('Push Failure:', e);
       setSyncStatus('error');
-      setSyncErrorMsg('서버와 통신할 수 없습니다.');
     }
   }, []);
 
-  // 초기 로드
   useEffect(() => {
     const savedProducts = localStorage.getItem('i-mom-products');
     if (savedProducts) setProducts(JSON.parse(savedProducts));
@@ -165,35 +131,21 @@ const App: React.FC = () => {
 
     if (syncCode) {
       pullFromCloud(syncCode);
-      const interval = setInterval(() => pullFromCloud(syncCode), 20000); // 주기 20초로 조정
+      const interval = setInterval(() => pullFromCloud(syncCode), 15000); // 15초마다 확인
       return () => clearInterval(interval);
     }
   }, [syncCode, pullFromCloud]);
 
-  const autoPush = useCallback((newRecords: ConsultationRecord[], newProducts: Product[]) => {
-    if (!syncCode) return;
-    if (pushTimerRef.current) clearTimeout(pushTimerRef.current);
-    pushTimerRef.current = setTimeout(() => {
-      pushToCloud(syncCode, newRecords, newProducts);
-    }, 2000);
-  }, [syncCode, pushToCloud]);
-
   const handleUpdateRecords = (newRecords: ConsultationRecord[]) => {
     setRecords(newRecords);
     localStorage.setItem('i-mom-records', JSON.stringify(newRecords));
-    autoPush(newRecords, products);
+    if (syncCode) pushToCloud(syncCode, newRecords, products);
   };
 
-  const handleUpdateProducts = async (newProducts: Product[]) => {
-    const optimizedProducts = await Promise.all(newProducts.map(async p => {
-      const optimizedImages = await Promise.all(p.images.map(async img => {
-        return img.length > 50000 ? await compressImageExtreme(img) : img;
-      }));
-      return { ...p, images: optimizedImages };
-    }));
-    setProducts(optimizedProducts);
-    localStorage.setItem('i-mom-products', JSON.stringify(optimizedProducts));
-    autoPush(records, optimizedProducts);
+  const handleUpdateProducts = (newProducts: Product[]) => {
+    setProducts(newProducts);
+    localStorage.setItem('i-mom-products', JSON.stringify(newProducts));
+    if (syncCode) pushToCloud(syncCode, records, newProducts);
   };
 
   const handleUpdateConfig = (newConfig: PharmacyConfig) => {
@@ -216,6 +168,7 @@ const App: React.FC = () => {
       counselingMethod: '태블릿 대면 상담',
       dispensingDays: 30
     };
+    
     const updatedRecords = [newRecord, ...records];
     handleUpdateRecords(updatedRecords);
     return newRecord;
@@ -232,21 +185,19 @@ const App: React.FC = () => {
                <div className="flex items-center gap-1.5">
                  <div className={`w-1.5 h-1.5 rounded-full ${
                     syncStatus === 'syncing' ? 'bg-amber-400 animate-pulse' : 
-                    syncStatus === 'connected' ? 'bg-teal-500' : 
-                    syncStatus === 'error' ? 'bg-red-500' : 'bg-slate-300'
+                    syncStatus === 'connected' ? 'bg-teal-500' : 'bg-red-500'
                  }`}></div>
                  <span className={`text-[9px] font-black uppercase tracking-widest ${syncStatus === 'error' ? 'text-red-500' : 'text-slate-400'}`}>
-                   {syncStatus === 'syncing' ? '데이터 확인 중...' : 
-                    syncStatus === 'connected' ? '기기간 연동 활성화' : 
-                    syncStatus === 'error' ? (syncErrorMsg || '연결 대기') : '오프라인'}
+                   {syncStatus === 'syncing' ? '데이터 동기화 중' : 
+                    syncStatus === 'connected' ? `실시간 연동 활성화 (${lastSyncTime})` : (syncErrorDetail || '연동 오류')}
                  </span>
                </div>
             )}
           </div>
         </div>
         <div className="flex gap-2">
-           <button onClick={() => { if(syncCode) pullFromCloud(syncCode); }} className={`w-10 h-10 bg-slate-50 border rounded-xl flex items-center justify-center hover:bg-white transition-colors ${syncStatus === 'syncing' ? 'animate-spin' : ''}`}>🔄</button>
-           <button onClick={() => isAdminAuthenticated ? setCurrentView('admin') : setShowAdminLogin(true)} className="w-10 h-10 bg-slate-50 border rounded-xl flex items-center justify-center hover:bg-white transition-colors">⚙️</button>
+           <button onClick={() => { if(syncCode) pullFromCloud(syncCode); }} className="w-10 h-10 bg-slate-50 border rounded-xl flex items-center justify-center hover:bg-white active:scale-90 transition-all shadow-sm">🔄</button>
+           <button onClick={() => isAdminAuthenticated ? setCurrentView('admin') : setShowAdminLogin(true)} className="w-10 h-10 bg-slate-50 border rounded-xl flex items-center justify-center hover:bg-white transition-all shadow-sm">⚙️</button>
         </div>
       </header>
 
@@ -278,10 +229,9 @@ const App: React.FC = () => {
             onUpdatePharmacists={setPharmacists}
             onUpdateConfig={handleUpdateConfig}
             onSetSyncCode={(code) => {
-              const cleaned = code.trim();
-              setSyncCode(cleaned);
-              localStorage.setItem('i-mom-sync-code', cleaned);
-              pullFromCloud(cleaned);
+              setSyncCode(code.trim());
+              localStorage.setItem('i-mom-sync-code', code.trim());
+              pullFromCloud(code.trim());
             }}
           />
         )}
