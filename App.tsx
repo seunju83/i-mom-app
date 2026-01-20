@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { PregnancyStage, AgeGroup, BloodTestResult, HbLevel, Symptom, SurveyData, Product, ConsultationRecord, Pharmacist, PharmacyConfig } from './types';
 import { INITIAL_PRODUCTS, DISCLAIMER } from './constants';
 import HomeView from './components/HomeView';
@@ -23,74 +23,16 @@ const App: React.FC = () => {
   });
   
   const [syncCode, setSyncCode] = useState<string>(localStorage.getItem('i-mom-sync-code') || '');
-  const [syncStatus, setSyncStatus] = useState<'connected' | 'error' | 'syncing' | 'idle' | 'new'>('idle');
+  const [syncStatus, setSyncStatus] = useState<'connected' | 'error' | 'syncing' | 'idle' | 'initializing'>('idle');
   const [lastSyncTime, setLastSyncTime] = useState<string>('');
   
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
 
-  // [Pull] 서버 데이터 가져오기 및 지능형 병합
-  const pullFromCloud = useCallback(async (code: string) => {
-    if (!code || code.trim().length < 3) return;
-    const targetCode = code.trim();
-    
-    try {
-      setSyncStatus('syncing');
-      const response = await fetch(`${SYNC_API_BASE}/${targetCode}`, { 
-        method: 'GET',
-        headers: { 'Accept': 'application/json' },
-        mode: 'cors'
-      });
-      
-      if (response.status === 404) {
-        // 새로운 코드인 경우 에러가 아니라 '신규 생성 가능' 상태로 인식
-        setSyncStatus('new');
-        setLastSyncTime('새 연동 코드 준비됨');
-        return;
-      }
-
-      if (response.ok) {
-        const data = await response.json();
-        
-        // 1. 상담 기록 병합 (로컬에 없는 ID만 추가)
-        if (data.records) {
-          const localRecords: ConsultationRecord[] = JSON.parse(localStorage.getItem('i-mom-records') || '[]');
-          const recordMap = new Map();
-          localRecords.forEach(r => recordMap.set(r.id, r));
-          
-          data.records.forEach((r: ConsultationRecord) => {
-            if (!recordMap.has(r.id)) recordMap.set(r.id, r);
-          });
-          
-          const merged = Array.from(recordMap.values()).sort((a: any, b: any) => 
-            new Date(b.date).getTime() - new Date(a.date).getTime()
-          );
-          
-          setRecords(merged);
-          localStorage.setItem('i-mom-records', JSON.stringify(merged));
-        }
-
-        // 2. 제품 정보 업데이트 (서버 데이터가 있으면 신뢰)
-        if (data.products && data.products.length > 0) {
-          setProducts(data.products);
-          localStorage.setItem('i-mom-products', JSON.stringify(data.products));
-        }
-        
-        setSyncStatus('connected');
-        setLastSyncTime(new Date().toLocaleTimeString());
-      } else {
-        setSyncStatus('error');
-      }
-    } catch (e) {
-      console.error('Pull Error:', e);
-      setSyncStatus('error');
-    }
-  }, []);
-
-  // [Push] 로컬 데이터를 서버에 강제로 밀어넣기
+  // [Push] 데이터를 서버에 저장 (CORS 및 에러 핸들링 강화)
   const pushToCloud = useCallback(async (code: string, currentRecords: ConsultationRecord[], currentProducts: Product[]) => {
-    if (!code || code.trim().length < 3) return;
+    if (!code || code.trim().length < 3 || !navigator.onLine) return;
     const targetCode = code.trim();
 
     try {
@@ -98,12 +40,12 @@ const App: React.FC = () => {
       const payload = JSON.stringify({
         records: currentRecords,
         products: currentProducts,
-        timestamp: Date.now()
+        updatedAt: Date.now()
       });
 
       const response = await fetch(`${SYNC_API_BASE}/${targetCode}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'text/plain' }, // CORS preflight 회피
         mode: 'cors',
         body: payload
       });
@@ -115,16 +57,81 @@ const App: React.FC = () => {
         setSyncStatus('error');
       }
     } catch (e) {
-      console.error('Push Error:', e);
       setSyncStatus('error');
     }
   }, []);
 
-  // 초기 로딩 및 폴링
+  // [Pull] 서버 데이터를 가져오고 지능적으로 병합 (유실 방지 핵심)
+  const pullFromCloud = useCallback(async (code: string) => {
+    if (!code || code.trim().length < 3 || !navigator.onLine) return;
+    const targetCode = code.trim();
+    
+    try {
+      setSyncStatus('syncing');
+      const response = await fetch(`${SYNC_API_BASE}/${targetCode}?nocache=${Date.now()}`, { 
+        method: 'GET',
+        headers: { 'Accept': 'application/json' },
+        mode: 'cors',
+        cache: 'no-store'
+      });
+      
+      // 서버에 데이터가 아예 없는 경우 (404) -> 내 로컬 데이터를 서버로 복제하여 연동 시작
+      if (response.status === 404) {
+        setSyncStatus('initializing');
+        const localRecs = JSON.parse(localStorage.getItem('i-mom-records') || '[]');
+        const localProds = JSON.parse(localStorage.getItem('i-mom-products') || JSON.stringify(INITIAL_PRODUCTS));
+        await pushToCloud(targetCode, localRecs, localProds);
+        return;
+      }
+
+      if (response.ok) {
+        const data = await response.json();
+        
+        // 데이터 무결성 체크: 서버 데이터가 너무 부실하면 무시 (유실 방지)
+        if (!data || (!data.records && !data.products)) {
+          setSyncStatus('error');
+          return;
+        }
+
+        // 1. 상담 기록 지능형 병합 (ID 기준)
+        const localRecords: ConsultationRecord[] = JSON.parse(localStorage.getItem('i-mom-records') || '[]');
+        const recordMap = new Map();
+        localRecords.forEach(r => recordMap.set(r.id, r));
+        
+        if (data.records && Array.isArray(data.records)) {
+          data.records.forEach((r: ConsultationRecord) => {
+            if (!recordMap.has(r.id)) recordMap.set(r.id, r);
+          });
+        }
+        
+        const mergedRecords = Array.from(recordMap.values()).sort((a: any, b: any) => 
+          new Date(b.date).getTime() - new Date(a.date).getTime()
+        );
+        
+        setRecords(mergedRecords);
+        localStorage.setItem('i-mom-records', JSON.stringify(mergedRecords));
+
+        // 2. 제품 정보 업데이트 (서버에 유효한 제품이 있을 때만)
+        if (data.products && Array.isArray(data.products) && data.products.length > 0) {
+          setProducts(data.products);
+          localStorage.setItem('i-mom-products', JSON.stringify(data.products));
+        }
+        
+        setSyncStatus('connected');
+        setLastSyncTime(new Date().toLocaleTimeString());
+      } else {
+        setSyncStatus('error');
+      }
+    } catch (e) {
+      setSyncStatus('error');
+    }
+  }, [pushToCloud]);
+
+  // 초기 상태 로딩 및 자동 동기화 시작
   useEffect(() => {
+    // 1. 로컬 데이터 우선 로드
     const savedProducts = localStorage.getItem('i-mom-products');
-    if (savedProducts) setProducts(JSON.parse(savedProducts));
-    else setProducts(INITIAL_PRODUCTS);
+    setProducts(savedProducts ? JSON.parse(savedProducts) : INITIAL_PRODUCTS);
 
     const savedRecordsStr = localStorage.getItem('i-mom-records');
     if (savedRecordsStr) setRecords(JSON.parse(savedRecordsStr));
@@ -132,9 +139,10 @@ const App: React.FC = () => {
     const savedConfig = localStorage.getItem('i-mom-config');
     if (savedConfig) setPharmacyConfig(JSON.parse(savedConfig));
 
+    // 2. 연동 코드 있으면 즉시 Pull
     if (syncCode) {
       pullFromCloud(syncCode);
-      const interval = setInterval(() => pullFromCloud(syncCode), 40000); // 40초 주기 동기화
+      const interval = setInterval(() => pullFromCloud(syncCode), 60000); // 1분마다 자동 확인
       return () => clearInterval(interval);
     }
   }, [syncCode, pullFromCloud]);
@@ -189,12 +197,12 @@ const App: React.FC = () => {
                  <div className={`w-1.5 h-1.5 rounded-full ${
                     syncStatus === 'syncing' ? 'bg-amber-400 animate-pulse' : 
                     syncStatus === 'connected' ? 'bg-teal-500' : 
-                    syncStatus === 'new' ? 'bg-blue-400' : 'bg-red-500'
+                    syncStatus === 'initializing' ? 'bg-blue-400' : 'bg-red-500'
                  }`}></div>
                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
-                   {syncStatus === 'syncing' ? '동기화 중...' : 
+                   {syncStatus === 'syncing' ? '데이터 동기화 중...' : 
                     syncStatus === 'connected' ? `연동 활성화 (${lastSyncTime})` : 
-                    syncStatus === 'new' ? '새로운 연동 대기중' : '연동 확인 필요 (인터넷 확인)'}
+                    syncStatus === 'initializing' ? '초기 연동 설정 중...' : '연동 확인 필요'}
                  </span>
                </div>
             )}
@@ -206,7 +214,7 @@ const App: React.FC = () => {
                onClick={() => pushToCloud(syncCode, records, products)}
                className="px-4 py-2 bg-teal-600 text-white text-[10px] font-black rounded-xl shadow-lg hover:bg-teal-700 active:scale-95 transition-all"
              >
-               클라우드에 저장
+               클라우드 강제 저장
              </button>
            )}
            <button onClick={() => { if(syncCode) pullFromCloud(syncCode); }} className="w-10 h-10 bg-slate-50 border rounded-xl flex items-center justify-center hover:bg-white active:scale-90 transition-all shadow-sm">🔄</button>
@@ -242,9 +250,10 @@ const App: React.FC = () => {
             onUpdatePharmacists={setPharmacists}
             onUpdateConfig={handleUpdateConfig}
             onSetSyncCode={(code) => {
-              setSyncCode(code.trim());
-              localStorage.setItem('i-mom-sync-code', code.trim());
-              pullFromCloud(code.trim());
+              const cleaned = code.trim();
+              setSyncCode(cleaned);
+              localStorage.setItem('i-mom-sync-code', cleaned);
+              pullFromCloud(cleaned);
             }}
           />
         )}
