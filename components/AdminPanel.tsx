@@ -1,6 +1,6 @@
 
-import React, { useState, useMemo, useRef } from 'react';
-import { Product, ConsultationRecord, Pharmacist, PharmacyConfig, IngredientInfo, PillType } from '../types';
+import React, { useState, useMemo } from 'react';
+import { Product, ConsultationRecord, Pharmacist, PharmacyConfig } from '../types';
 import RecordDetailModal from './RecordDetailModal';
 
 interface AdminPanelProps {
@@ -8,21 +8,25 @@ interface AdminPanelProps {
   records: ConsultationRecord[];
   pharmacists: Pharmacist[];
   config: PharmacyConfig;
+  syncCode: string;
   onUpdateProducts: (products: Product[]) => void;
   onUpdateRecords: (records: ConsultationRecord[]) => void;
   onUpdatePharmacists: (pharmacists: Pharmacist[]) => void;
   onUpdateConfig: (config: PharmacyConfig) => void;
+  onSetSyncCode: (code: string) => void;
+  onRefresh: () => void;
 }
 
 const AdminPanel: React.FC<AdminPanelProps> = ({ 
-    products, records, pharmacists, config, 
-    onUpdateProducts, onUpdateRecords, onUpdatePharmacists, onUpdateConfig 
+    products, records, pharmacists, config, syncCode,
+    onUpdateProducts, onUpdateRecords, onUpdatePharmacists, onUpdateConfig,
+    onSetSyncCode, onRefresh
 }) => {
   const [tab, setTab] = useState<'products' | 'records' | 'customers' | 'settings'>('products');
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [viewingRecord, setViewingRecord] = useState<ConsultationRecord | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [newSyncCode, setNewSyncCode] = useState(syncCode);
 
   const filteredRecords = useMemo(() => {
     return records.filter(r => 
@@ -32,137 +36,126 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   }, [records, searchQuery]);
 
   const uniqueCustomers = useMemo(() => {
-    const customerMap = new Map<string, ConsultationRecord>();
+    const customerMap = new Map<string, ConsultationRecord[]>();
     records.forEach(r => {
       const key = `${r.customerName}-${r.surveyData.phone}`;
-      if (!customerMap.has(key)) customerMap.set(key, r);
+      if (!customerMap.has(key)) customerMap.set(key, []);
+      customerMap.get(key)!.push(r);
     });
-    return Array.from(customerMap.values()).filter(c => 
-      c.customerName.toLowerCase().includes(searchQuery.toLowerCase()) || 
-      c.surveyData.phone.includes(searchQuery)
-    );
+    return Array.from(customerMap.entries()).map(([key, customerRecords]) => ({
+      name: customerRecords[0].customerName,
+      phone: customerRecords[0].surveyData.phone,
+      lastStage: customerRecords[0].surveyData.stage,
+      count: customerRecords.length,
+      lastDate: customerRecords[0].date
+    })).filter(c => c.name.includes(searchQuery) || c.phone.includes(searchQuery));
   }, [records, searchQuery]);
 
-  const handleDeleteRecord = (id: string) => {
-    if (confirm('해당 상담 기록을 영구 삭제하시겠습니까?\n(3년 보관 원칙에 따라 신중히 결정해 주세요.)')) {
-      const newRecords = records.filter(r => r.id !== id);
-      onUpdateRecords(newRecords);
-    }
-  };
-
-  const handleSaveProduct = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingProduct) return;
-
-    let updatedProducts;
-    const existingIndex = products.findIndex(p => p.id === editingProduct.id);
-    if (existingIndex !== -1) {
-      updatedProducts = products.map(p => p.id === editingProduct.id ? editingProduct : p);
-    } else {
-      const newId = editingProduct.id || `P-${Date.now()}`;
-      updatedProducts = [...products, { ...editingProduct, id: newId }];
-    }
-    onUpdateProducts(updatedProducts);
-    setEditingProduct(null);
-  };
-
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file && editingProduct) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setEditingProduct({
-          ...editingProduct,
-          images: [reader.result as string]
-        });
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const handleIngredientChange = (idx: number, field: keyof IngredientInfo, value: string | number) => {
-    if (!editingProduct) return;
-    const newIngredients = [...editingProduct.ingredients];
-    newIngredients[idx] = { ...newIngredients[idx], [field]: value };
-    setEditingProduct({ ...editingProduct, ingredients: newIngredients });
-  };
-
-  const addIngredient = () => {
-    if (!editingProduct) return;
-    setEditingProduct({
-      ...editingProduct,
-      ingredients: [...editingProduct.ingredients, { name: '', amount: 0, unit: '' }]
-    });
-  };
-
-  const removeIngredient = (idx: number) => {
-    if (!editingProduct) return;
-    const newIngredients = editingProduct.ingredients.filter((_, i) => i !== idx);
-    setEditingProduct({ ...editingProduct, ingredients: newIngredients });
-  };
-
   return (
-    <div className="space-y-6">
-      <div className="flex border-b border-slate-100 overflow-x-auto">
+    <div className="space-y-6 animate-in fade-in duration-500">
+      <div className="flex border-b overflow-x-auto bg-white sticky top-0 z-10">
         {[
           { id: 'products', label: '제품 관리' },
           { id: 'records', label: '상담 로그' },
           { id: 'customers', label: '고객 관리' },
-          { id: 'settings', label: '설정' }
+          { id: 'settings', label: '보안 연동 및 설정' }
         ].map((t) => (
           <button 
             key={t.id}
             onClick={() => { setTab(t.id as any); setSearchQuery(''); }}
-            className={`px-6 py-4 font-black text-xs uppercase transition-all whitespace-nowrap ${tab === t.id ? 'text-teal-600 border-b-4 border-teal-600' : 'text-slate-400 hover:text-slate-600'}`}
+            className={`px-6 py-4 font-black text-xs whitespace-nowrap transition-all ${tab === t.id ? 'text-teal-600 border-b-4 border-teal-600 bg-teal-50/30' : 'text-slate-400'}`}
           >
             {t.label}
           </button>
         ))}
       </div>
 
-      {(tab === 'records' || tab === 'customers') && (
-        <div className="mb-4">
-           <input 
-            type="text" 
-            placeholder="성함 또는 연락처 검색" 
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            className="w-full p-4 border-2 border-slate-100 rounded-2xl outline-none focus:border-teal-500 shadow-inner font-bold"
-           />
+      {tab === 'settings' && (
+        <div className="space-y-6 animate-in slide-in-from-bottom duration-500">
+          <div className="bg-slate-900 p-8 rounded-[3rem] text-white space-y-4 shadow-xl">
+             <div className="flex justify-between items-start">
+               <div>
+                  <h4 className="text-xl font-black flex items-center gap-2">🛡️ 암호화 클라우드 동기화</h4>
+                  <p className="text-xs opacity-60 mt-1 font-bold">동기화 코드는 우리 약국만의 '데이터 암호화 열쇠'가 됩니다.</p>
+               </div>
+               <button onClick={onRefresh} className="p-3 bg-white/10 rounded-full hover:bg-white/20 transition-colors">🔄</button>
+             </div>
+             
+             <div className="bg-teal-900/30 p-4 rounded-2xl border border-teal-500/30 text-[11px] text-teal-200 leading-relaxed font-medium">
+               💡 <b>보안 안내:</b> 입력하신 코드로 모든 상담 데이터 및 제품 정보가 256비트 암호화 처리됩니다. 
+               코드를 모르면 외부인은 데이터를 절대 읽을 수 없습니다. 모든 기기에 동일한 코드를 입력해 주세요.
+             </div>
+
+             <div className="flex gap-2">
+                <input 
+                  type="text" 
+                  value={newSyncCode} 
+                  onChange={e => setNewSyncCode(e.target.value)}
+                  placeholder="약국 고유 보안 코드 (최소 6자)"
+                  className="flex-1 p-4 bg-white/10 border-2 border-white/10 rounded-2xl outline-none focus:border-teal-500 font-black text-white placeholder:text-white/20"
+                />
+                <button 
+                  onClick={() => {
+                    if (newSyncCode.length < 6) return alert('보안을 위해 코드를 6자 이상 입력해주세요.');
+                    onSetSyncCode(newSyncCode);
+                    alert('강력한 보안 연동이 설정되었습니다.');
+                  }}
+                  className="px-8 py-4 bg-teal-500 text-white font-black rounded-2xl hover:bg-teal-400 transition-colors shadow-lg shadow-teal-500/30"
+                >
+                  보안 연동
+                </button>
+             </div>
+             {syncCode && (
+               <div className="text-[10px] font-black bg-teal-500/20 text-teal-400 p-3 rounded-xl flex items-center justify-center gap-2 border border-teal-500/20">
+                 <span className="w-2 h-2 bg-teal-400 rounded-full animate-pulse"></span>
+                 현재 암호화 보호 모드 작동 중
+               </div>
+             )}
+          </div>
+
+          <div className="bg-white p-8 rounded-[3rem] border border-slate-100 space-y-6">
+             <h4 className="font-black text-slate-800">기본 정보 설정</h4>
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400">약국 명칭</label>
+                  <input value={config.pharmacyName} onChange={e => onUpdateConfig({...config, pharmacyName: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl outline-none focus:ring-2 focus:ring-teal-500 font-bold" />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400">대표 관리사 성함</label>
+                  <input value={config.managerName} onChange={e => onUpdateConfig({...config, managerName: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl outline-none focus:ring-2 focus:ring-teal-500 font-bold" />
+                </div>
+             </div>
+          </div>
         </div>
       )}
 
+      {(tab === 'records' || tab === 'customers') && (
+        <input 
+          type="text" placeholder="검색어 입력 (성함/연락처)" 
+          value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+          className="w-full p-4 border-2 rounded-2xl outline-none focus:border-teal-500 font-bold"
+        />
+      )}
+
       {tab === 'products' && (
-        <div className="space-y-6">
+        <div className="space-y-4">
           <div className="flex justify-between items-center">
-            <h3 className="text-xl font-black text-slate-800 tracking-tight">영양제 데이터베이스</h3>
-            <button 
-              onClick={() => setEditingProduct({ id: '', name: '', images: [''], price: 0, storage: '상온', usage: '', ingredients: [], isActive: true, expirationDate: '', pillType: 'round-white' })} 
-              className="px-6 py-3 bg-teal-600 text-white font-black rounded-2xl shadow-lg shadow-teal-600/20 active:scale-95 transition-all text-sm"
-            >
-              + 새 제품 등록
-            </button>
+             <h3 className="font-black text-slate-800">제품 관리 ({products.length})</h3>
+             <button onClick={() => setEditingProduct({ id: '', name: '', images: ['https://picsum.photos/seed/new/300/300'], price: 0, storage: '상온', usage: '', ingredients: [], isActive: true, expirationDate: '', pillType: 'round-white' })} className="px-4 py-2 bg-teal-600 text-white rounded-xl text-xs font-black">+ 새 제품 등록</button>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
              {products.map(p => (
-               <div key={p.id} className="p-5 bg-white border-2 border-slate-50 rounded-[2rem] shadow-sm flex flex-col gap-4 group hover:border-teal-200 transition-all">
+               <div key={p.id} className="p-4 bg-white border rounded-[2rem] flex flex-col gap-3 hover:shadow-md transition-all">
                   <div className="flex gap-4">
-                    <div className="w-16 h-16 bg-slate-50 rounded-2xl overflow-hidden shrink-0 border border-slate-100 flex items-center justify-center">
-                        {p.images[0] ? (
-                          <img src={p.images[0]} className="w-full h-full object-cover" />
-                        ) : (
-                          <span className="text-[10px] text-slate-300">No Image</span>
-                        )}
-                    </div>
-                    <div className="overflow-hidden flex-1">
-                        <h4 className="font-black text-slate-800 truncate text-sm">{p.name}</h4>
+                    <img src={p.images[0]} className="w-14 h-14 rounded-xl object-cover bg-slate-50 border" />
+                    <div className="flex-1 truncate">
+                        <h4 className="font-black text-slate-800 text-sm truncate">{p.name}</h4>
                         <p className="text-xs font-bold text-teal-600">{p.price.toLocaleString()}원</p>
-                        <p className="text-[10px] text-slate-400 mt-1 font-medium truncate">{p.usage}</p>
                     </div>
                   </div>
-                  <div className="flex gap-2 mt-auto pt-4 border-t border-slate-50">
-                    <button onClick={() => setEditingProduct(p)} className="flex-1 py-2 bg-slate-100 text-slate-600 font-black text-[11px] rounded-xl hover:bg-teal-50 hover:text-teal-600 transition-colors">정보 수정</button>
-                    <button onClick={() => { if(confirm('삭제하시겠습니까?')) onUpdateProducts(products.filter(item => item.id !== p.id)) }} className="px-4 py-2 bg-red-50 text-red-500 font-black text-[11px] rounded-xl hover:bg-red-500 hover:text-white transition-colors">삭제</button>
+                  <div className="flex gap-2">
+                    <button onClick={() => setEditingProduct(p)} className="flex-1 py-2 bg-slate-50 text-slate-600 font-black text-[10px] rounded-lg hover:bg-slate-100">수정</button>
+                    <button onClick={() => { if(confirm(`'${p.name}' 제품을 삭제하시겠습니까? 다른 기기에서도 삭제됩니다.`)) onUpdateProducts(products.filter(item => item.id !== p.id)) }} className="px-3 py-2 text-red-400 font-black text-[10px] hover:text-red-600">삭제</button>
                   </div>
                </div>
              ))}
@@ -171,163 +164,93 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
       )}
 
       {tab === 'records' && (
-        <div className="bg-white border rounded-2xl overflow-hidden shadow-sm overflow-x-auto">
-          <table className="w-full text-left min-w-[600px]">
-            <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400">
+        <div className="bg-white border rounded-[2rem] overflow-hidden shadow-sm">
+          <table className="w-full text-left text-sm">
+            <thead className="bg-slate-50 font-black text-[10px] text-slate-400 uppercase">
               <tr>
-                <th className="p-4">일시</th>
+                <th className="p-4">날짜</th>
                 <th className="p-4">고객명</th>
-                <th className="p-4">상담 단계</th>
-                <th className="p-4 text-right">최종 금액</th>
-                <th className="p-4 text-center">관리</th>
+                <th className="p-4 text-center">동작</th>
               </tr>
             </thead>
-            <tbody className="divide-y text-sm font-bold text-slate-600">
+            <tbody className="divide-y font-bold text-slate-600">
               {filteredRecords.map(r => (
-                <tr key={r.id} className="hover:bg-slate-50 transition">
-                  <td className="p-4 whitespace-nowrap">{new Date(r.date).toLocaleDateString()}</td>
-                  <td className="p-4 font-black text-slate-800">{r.customerName}</td>
-                  <td className="p-4"><span className="px-3 py-1 bg-teal-50 text-teal-600 rounded-full text-[10px] font-black whitespace-nowrap">{r.surveyData.stage}</span></td>
-                  <td className="p-4 text-right whitespace-nowrap">{r.totalPrice.toLocaleString()}원</td>
+                <tr key={r.id} className="hover:bg-slate-50 transition-colors">
+                  <td className="p-4 text-xs">{new Date(r.date).toLocaleDateString()}</td>
+                  <td className="p-4 text-slate-900">{r.customerName}</td>
                   <td className="p-4 flex gap-2 justify-center">
-                    <button onClick={() => setViewingRecord(r)} className="px-3 py-1 bg-teal-600 text-white rounded-lg text-xs font-black">보기</button>
-                    <button onClick={() => handleDeleteRecord(r.id)} className="px-3 py-1 bg-red-50 text-red-500 rounded-lg text-xs font-black hover:bg-red-500 hover:text-white transition-colors">삭제</button>
+                    <button onClick={() => setViewingRecord(r)} className="px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs font-black">상세보기</button>
+                    <button onClick={() => { if(confirm('이 상담 기록을 완전히 삭제하시겠습니까? 다른 기기에서도 사라집니다.')) onUpdateRecords(records.filter(item => item.id !== r.id)) }} className="px-3 py-1.5 bg-red-50 text-red-500 rounded-lg text-xs font-black hover:bg-red-500 hover:text-white transition-all">삭제</button>
                   </td>
                 </tr>
               ))}
+              {filteredRecords.length === 0 && (
+                <tr>
+                  <td colSpan={3} className="p-20 text-center text-slate-300 font-bold italic">기록이 없습니다.</td>
+                </tr>
+              )}
             </tbody>
           </table>
-          {filteredRecords.length === 0 && <div className="p-20 text-center text-slate-300 font-black italic">상담 기록이 없습니다.</div>}
         </div>
       )}
 
       {tab === 'customers' && (
-        <div className="bg-white border rounded-2xl overflow-hidden shadow-sm overflow-x-auto">
-           <table className="w-full text-left min-w-[600px]">
-              <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400">
+        <div className="bg-white border rounded-[2rem] overflow-hidden shadow-sm">
+           <table className="w-full text-left text-sm">
+              <thead className="bg-slate-50 font-black text-[10px] text-slate-400 uppercase">
                 <tr>
-                  <th className="p-4">고객 성함</th>
+                  <th className="p-4">성함</th>
                   <th className="p-4">연락처</th>
-                  <th className="p-4">임신 단계</th>
-                  <th className="p-4">상태</th>
-                  <th className="p-4 text-center">동작</th>
+                  <th className="p-4">방문수</th>
+                  <th className="p-4 text-center">관리</th>
                 </tr>
               </thead>
-              <tbody className="divide-y text-sm font-bold text-slate-600">
+              <tbody className="divide-y font-bold text-slate-600">
                 {uniqueCustomers.map(c => (
-                  <tr key={`${c.customerName}-${c.surveyData.phone}`}>
-                    <td className="p-4 font-black text-slate-800">{c.customerName}</td>
-                    <td className="p-4 font-mono">{c.surveyData.phone}</td>
-                    <td className="p-4 text-xs">{c.surveyData.stage}</td>
-                    <td className="p-4">
-                      <span className="px-2 py-1 bg-blue-50 text-blue-600 rounded text-[10px] font-black">기존 고객</span>
-                    </td>
+                  <tr key={`${c.name}-${c.phone}`} className="hover:bg-slate-50 transition-colors">
+                    <td className="p-4 text-slate-900">{c.name}</td>
+                    <td className="p-4 font-mono text-xs text-slate-400">{c.phone}</td>
+                    <td className="p-4"><span className="bg-teal-50 text-teal-600 px-2 py-0.5 rounded-full text-xs">{c.count}회 방문</span></td>
                     <td className="p-4 text-center">
-                      <button onClick={() => { setSearchQuery(c.customerName); setTab('records'); }} className="text-teal-600 font-black text-xs hover:underline">기록 보기</button>
+                      <button onClick={() => { setSearchQuery(c.name); setTab('records'); }} className="text-teal-600 text-xs font-black hover:underline">기록보기</button>
                     </td>
                   </tr>
                 ))}
               </tbody>
            </table>
-           {uniqueCustomers.length === 0 && <div className="p-20 text-center text-slate-300 font-black italic">고객 정보가 없습니다.</div>}
         </div>
       )}
 
-      {tab === 'settings' && (
-        <div className="bg-white p-10 rounded-[3rem] border border-slate-100 shadow-sm space-y-8">
-           <div className="flex items-center gap-3 border-b border-slate-50 pb-6 mb-2">
-              <span className="text-3xl">⚙️</span>
-              <h4 className="text-xl font-black text-slate-800 tracking-tight">약국 운영 환경 설정</h4>
-           </div>
-           
-           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              <div className="space-y-2">
-                <label className="text-xs font-black text-slate-400 uppercase tracking-widest">약국 명칭</label>
-                <input 
-                  value={config.pharmacyName} 
-                  onChange={e => onUpdateConfig({...config, pharmacyName: e.target.value})} 
-                  className="w-full p-4 bg-slate-50 border-none rounded-2xl outline-none focus:ring-2 focus:ring-teal-500 font-bold" 
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs font-black text-slate-400 uppercase tracking-widest">관리사 성함</label>
-                <input 
-                  value={config.managerName} 
-                  onChange={e => onUpdateConfig({...config, managerName: e.target.value})} 
-                  className="w-full p-4 bg-slate-50 border-none rounded-2xl outline-none focus:ring-2 focus:ring-teal-500 font-bold" 
-                />
-              </div>
-              <div className="space-y-2 col-span-1 md:col-span-2">
-                <label className="text-xs font-black text-slate-400 uppercase tracking-widest">약국 주소</label>
-                <input 
-                  value={config.businessAddress} 
-                  onChange={e => onUpdateConfig({...config, businessAddress: e.target.value})} 
-                  className="w-full p-4 bg-slate-50 border-none rounded-2xl outline-none focus:ring-2 focus:ring-teal-500 font-bold" 
-                />
-              </div>
-           </div>
-        </div>
-      )}
-
-      {/* 제품 수정/추가 모달 */}
       {editingProduct && (
-        <div className="fixed inset-0 bg-slate-900/60 z-[300] flex items-center justify-center p-6 backdrop-blur-md animate-in fade-in">
-          <div className="bg-white w-full max-w-2xl rounded-[3rem] shadow-2xl flex flex-col overflow-hidden max-h-[90vh]">
-            <form onSubmit={handleSaveProduct} className="flex flex-col h-full">
-              <div className="p-8 border-b border-slate-50 bg-slate-50/50 flex justify-between items-center">
-                <h3 className="text-2xl font-black text-slate-800">영양제 등록/수정</h3>
-                <button type="button" onClick={() => setEditingProduct(null)} className="text-slate-400 hover:text-slate-900 font-bold">✕</button>
-              </div>
-              <div className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar">
-                <div className="grid grid-cols-2 gap-6">
-                  <div className="flex flex-col gap-2">
-                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest">제품명</label>
-                    <input required value={editingProduct.name} onChange={e => setEditingProduct({...editingProduct, name: e.target.value})} className="p-4 bg-slate-50 border-none rounded-2xl font-bold focus:ring-2 focus:ring-teal-500 outline-none" />
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest">가격 (원)</label>
-                    <input type="number" required value={editingProduct.price} onChange={e => setEditingProduct({...editingProduct, price: parseInt(e.target.value) || 0})} className="p-4 bg-slate-50 border-none rounded-2xl font-bold focus:ring-2 focus:ring-teal-500 outline-none" />
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest">제형</label>
-                    <select value={editingProduct.pillType} onChange={e => setEditingProduct({...editingProduct, pillType: e.target.value as PillType})} className="p-4 bg-slate-50 border-none rounded-2xl font-bold focus:ring-2 focus:ring-teal-500 outline-none">
-                      <option value="round-white">하얀색 원형</option>
-                      <option value="oval-yellow">노란색 타원형</option>
-                      <option value="capsule-brown">갈색 캡슐</option>
-                      <option value="small-round">작은 원형</option>
-                      <option value="powder-pack">분말 포</option>
-                    </select>
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest">복용법</label>
-                    <input value={editingProduct.usage} onChange={e => setEditingProduct({...editingProduct, usage: e.target.value})} className="p-4 bg-slate-50 border-none rounded-2xl font-bold focus:ring-2 focus:ring-teal-500 outline-none" />
-                  </div>
-                  <div className="flex flex-col gap-2 col-span-2">
-                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest">이미지 URL</label>
-                    <input value={editingProduct.images[0]} onChange={e => setEditingProduct({...editingProduct, images: [e.target.value]})} className="p-4 bg-slate-50 border-none rounded-2xl font-bold focus:ring-2 focus:ring-teal-500 outline-none" />
-                  </div>
+        <div className="fixed inset-0 bg-slate-900/60 z-[300] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white w-full max-w-xl rounded-[3rem] shadow-2xl flex flex-col overflow-hidden max-h-[85vh]">
+            <div className="p-6 border-b bg-slate-50 flex justify-between items-center">
+              <h3 className="text-xl font-black">{editingProduct.id ? '제품 정보 수정' : '새 제품 등록'}</h3>
+              <button onClick={() => setEditingProduct(null)} className="text-slate-400 font-bold text-xl">✕</button>
+            </div>
+            <form onSubmit={(e) => {
+               e.preventDefault();
+               const updated = editingProduct.id 
+                 ? products.map(p => p.id === editingProduct.id ? editingProduct : p)
+                 : [...products, { ...editingProduct, id: `P-${Date.now()}` }];
+               onUpdateProducts(updated);
+               setEditingProduct(null);
+            }} className="flex-1 overflow-y-auto p-8 space-y-6">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-black text-slate-400">제품명</label>
+                  <input required value={editingProduct.name} onChange={e => setEditingProduct({...editingProduct, name: e.target.value})} className="p-4 bg-slate-50 rounded-2xl font-bold border-2 border-transparent focus:border-teal-500 outline-none" />
                 </div>
-                <div className="space-y-4">
-                   <div className="flex justify-between items-center">
-                     <label className="text-xs font-black text-slate-400 uppercase tracking-widest">함유 성분</label>
-                     <button type="button" onClick={addIngredient} className="text-[11px] font-black text-teal-600 bg-teal-50 px-4 py-1.5 rounded-xl">+ 추가</button>
-                   </div>
-                   <div className="space-y-2">
-                      {editingProduct.ingredients.map((ing, idx) => (
-                        <div key={idx} className="flex gap-2 items-center bg-slate-50 p-2 rounded-2xl">
-                          <input placeholder="성분명" value={ing.name} onChange={e => handleIngredientChange(idx, 'name', e.target.value)} className="flex-[2] p-3 bg-white border border-slate-50 rounded-xl text-xs font-bold" />
-                          <input type="number" placeholder="함량" value={ing.amount} onChange={e => handleIngredientChange(idx, 'amount', parseInt(e.target.value) || 0)} className="flex-1 p-3 bg-white border border-slate-50 rounded-xl text-xs font-bold" />
-                          <input placeholder="단위" value={ing.unit} onChange={e => handleIngredientChange(idx, 'unit', e.target.value)} className="flex-1 p-3 bg-white border border-slate-50 rounded-xl text-xs font-bold" />
-                          <button type="button" onClick={() => removeIngredient(idx)} className="p-2 text-red-400 font-bold">✕</button>
-                        </div>
-                      ))}
-                   </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-black text-slate-400">가격(원)</label>
+                  <input type="number" required value={editingProduct.price} onChange={e => setEditingProduct({...editingProduct, price: parseInt(e.target.value) || 0})} className="p-4 bg-slate-50 rounded-2xl font-bold border-2 border-transparent focus:border-teal-500 outline-none" />
                 </div>
               </div>
-              <div className="p-8 bg-slate-50 border-t border-slate-100 flex gap-4">
-                <button type="button" onClick={() => setEditingProduct(null)} className="flex-1 py-4 bg-white text-slate-400 font-black rounded-2xl border-2 border-slate-200">취소</button>
-                <button type="submit" className="flex-[2] py-4 bg-teal-600 text-white font-black rounded-2xl shadow-xl active:scale-95 transition-all">설정 저장</button>
+              <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-black text-slate-400">복용 방법</label>
+                  <input value={editingProduct.usage} onChange={e => setEditingProduct({...editingProduct, usage: e.target.value})} placeholder="예: 1일 1회 식후 복용" className="p-4 bg-slate-50 rounded-2xl font-bold border-2 border-transparent focus:border-teal-500 outline-none" />
               </div>
+              <button type="submit" className="w-full py-4 bg-teal-600 text-white font-black rounded-2xl shadow-xl hover:bg-teal-700 transition-all">정보 저장 및 동기화</button>
             </form>
           </div>
         </div>
