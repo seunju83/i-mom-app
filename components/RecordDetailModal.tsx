@@ -22,9 +22,9 @@ const RecordDetailModal: React.FC<RecordDetailModalProps> = ({ record, config, o
   };
 
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-[200] backdrop-blur-md print:static print:bg-white print:p-0 print:block overflow-y-auto">
-      {/* 인쇄 메인 컨테이너 */}
-      <div className="bg-white rounded-[2.5rem] w-full max-w-4xl min-h-[90vh] p-12 shadow-2xl relative print:shadow-none print:p-0 print:rounded-none print:w-full print:block print:min-h-0 print-content">
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-[200] backdrop-blur-md print:bg-white print:p-0 print:block print:static print-modal-wrapper overflow-y-auto">
+      {/* 인쇄 메인 컨테이너 - print-area 클래스 추가 */}
+      <div className="bg-white rounded-[2.5rem] w-full max-w-4xl min-h-[90vh] p-12 shadow-2xl relative print:shadow-none print:p-0 print:rounded-none print:w-full print:block print:static print-area">
         
         <button onClick={onClose} className="absolute top-8 right-8 w-12 h-12 flex items-center justify-center text-slate-300 hover:text-slate-900 transition-colors text-3xl font-bold print:hidden">✕</button>
         
@@ -140,41 +140,55 @@ const RecordDetailModal: React.FC<RecordDetailModalProps> = ({ record, config, o
 
       <style>{`
         @media print {
+            /* 1. 모든 요소 숨김 처리 */
+            html, body, #root, #root > div {
+              visibility: hidden !important;
+              height: auto !important;
+              overflow: visible !important;
+              margin: 0 !important;
+              padding: 0 !important;
+              width: 100% !important;
+              max-width: none !important;
+            }
+            
+            /* 2. 기록지 모달만 보이게 처리 */
+            .print-modal-wrapper, 
+            .print-modal-wrapper .print-area, 
+            .print-modal-wrapper .print-area * {
+              visibility: visible !important;
+            }
+
+            /* 3. 모달 위치를 페이지 최상단으로 강제 고정 */
+            .print-modal-wrapper {
+              position: absolute !important;
+              left: 0 !important;
+              top: 0 !important;
+              width: 100% !important;
+              display: block !important;
+              background: white !important;
+            }
+
+            .print-area {
+              border: none !important;
+              padding: 0 !important;
+              margin: 0 !important;
+              width: 100% !important;
+              max-width: 100% !important;
+              box-shadow: none !important;
+            }
+
             @page {
               size: A4;
-              margin: 10mm;
+              margin: 15mm;
             }
-            body { 
-              background: white !important; 
-              color: black !important;
-            }
-            #root > div > header, 
-            #root > div > footer,
+            
             .print\\:hidden { 
               display: none !important; 
             }
-            .fixed {
-              position: static !important;
-              display: block !important;
-              background: white !important;
-              padding: 0 !important;
-              overflow: visible !important;
-            }
-            .print-content { 
-              max-width: 100% !important;
-              padding: 0 !important;
-              margin: 0 !important;
-            }
-            /* 배경 이미지가 아닌 실제 색상 출력을 위해 */
+
             * { 
               -webkit-print-color-adjust: exact !important; 
               print-color-adjust: exact !important; 
-              box-shadow: none !important;
-            }
-            /* 텍스트 줄바꿈 및 폰트 선명도 */
-            h3, p, span, td {
-              text-rendering: optimizeLegibility;
-              letter-spacing: -0.01em;
             }
         }
       `}</style>
