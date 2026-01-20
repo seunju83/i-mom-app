@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { PregnancyStage, AgeGroup, BloodTestResult, HbLevel, Symptom, SurveyData, Product, ConsultationRecord, Pharmacist, PharmacyConfig } from './types';
 import { INITIAL_PRODUCTS, DISCLAIMER } from './constants';
 import HomeView from './components/HomeView';
@@ -23,78 +23,74 @@ const App: React.FC = () => {
   });
   
   const [syncCode, setSyncCode] = useState<string>(localStorage.getItem('i-mom-sync-code') || '');
-  const [syncStatus, setSyncStatus] = useState<'connected' | 'error' | 'syncing' | 'idle' | 'offline'>('idle');
+  const [syncStatus, setSyncStatus] = useState<'connected' | 'error' | 'syncing' | 'idle' | 'new'>('idle');
   const [lastSyncTime, setLastSyncTime] = useState<string>('');
   
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
 
-  // [Pull Engine] 데이터 가져오기 및 병합
+  // [Pull] 서버 데이터 가져오기 및 지능형 병합
   const pullFromCloud = useCallback(async (code: string) => {
-    if (!code || !navigator.onLine) {
-      if (!navigator.onLine) setSyncStatus('offline');
-      return;
-    }
-    
+    if (!code || code.trim().length < 3) return;
     const targetCode = code.trim();
-    if (targetCode.length < 2) return;
-
+    
     try {
       setSyncStatus('syncing');
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000); // 5초 타임아웃
-
-      const response = await fetch(`${SYNC_API_BASE}/${targetCode}?t=${Date.now()}`, { 
+      const response = await fetch(`${SYNC_API_BASE}/${targetCode}`, { 
         method: 'GET',
-        signal: controller.signal
+        headers: { 'Accept': 'application/json' },
+        mode: 'cors'
       });
-      clearTimeout(timeoutId);
       
-      if (response.ok) {
-        const text = await response.text();
-        if (text && text.trim().startsWith('{')) {
-          const data = JSON.parse(text);
-          
-          // 상담 기록 병합 (로컬 데이터 유지하면서 서버 데이터 중 새 것만 추가)
-          if (data.records) {
-            const localRecords: ConsultationRecord[] = JSON.parse(localStorage.getItem('i-mom-records') || '[]');
-            const recordMap = new Map();
-            // 로컬 기록 먼저 맵에 담기
-            localRecords.forEach(r => recordMap.set(r.id, r));
-            // 서버 기록 중 로컬에 없는 것만 담기
-            data.records.forEach((r: ConsultationRecord) => {
-              if (!recordMap.has(r.id)) recordMap.set(r.id, r);
-            });
-            
-            const merged = Array.from(recordMap.values()).sort((a: any, b: any) => 
-              new Date(b.date).getTime() - new Date(a.date).getTime()
-            );
-            
-            setRecords(merged);
-            localStorage.setItem('i-mom-records', JSON.stringify(merged));
-          }
+      if (response.status === 404) {
+        // 새로운 코드인 경우 에러가 아니라 '신규 생성 가능' 상태로 인식
+        setSyncStatus('new');
+        setLastSyncTime('새 연동 코드 준비됨');
+        return;
+      }
 
-          if (data.products && data.products.length > 0) {
-            setProducts(data.products);
-            localStorage.setItem('i-mom-products', JSON.stringify(data.products));
-          }
+      if (response.ok) {
+        const data = await response.json();
+        
+        // 1. 상담 기록 병합 (로컬에 없는 ID만 추가)
+        if (data.records) {
+          const localRecords: ConsultationRecord[] = JSON.parse(localStorage.getItem('i-mom-records') || '[]');
+          const recordMap = new Map();
+          localRecords.forEach(r => recordMap.set(r.id, r));
           
-          setSyncStatus('connected');
-          setLastSyncTime(new Date().toLocaleTimeString());
+          data.records.forEach((r: ConsultationRecord) => {
+            if (!recordMap.has(r.id)) recordMap.set(r.id, r);
+          });
+          
+          const merged = Array.from(recordMap.values()).sort((a: any, b: any) => 
+            new Date(b.date).getTime() - new Date(a.date).getTime()
+          );
+          
+          setRecords(merged);
+          localStorage.setItem('i-mom-records', JSON.stringify(merged));
         }
+
+        // 2. 제품 정보 업데이트 (서버 데이터가 있으면 신뢰)
+        if (data.products && data.products.length > 0) {
+          setProducts(data.products);
+          localStorage.setItem('i-mom-products', JSON.stringify(data.products));
+        }
+        
+        setSyncStatus('connected');
+        setLastSyncTime(new Date().toLocaleTimeString());
       } else {
         setSyncStatus('error');
       }
     } catch (e) {
-      console.warn('Sync Pull Issue:', e);
+      console.error('Pull Error:', e);
       setSyncStatus('error');
     }
   }, []);
 
-  // [Push Engine] 데이터 서버 전송
+  // [Push] 로컬 데이터를 서버에 강제로 밀어넣기
   const pushToCloud = useCallback(async (code: string, currentRecords: ConsultationRecord[], currentProducts: Product[]) => {
-    if (!code || !navigator.onLine) return;
+    if (!code || code.trim().length < 3) return;
     const targetCode = code.trim();
 
     try {
@@ -107,7 +103,8 @@ const App: React.FC = () => {
 
       const response = await fetch(`${SYNC_API_BASE}/${targetCode}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'text/plain' }, // CORS 충돌 최소화를 위해 텍스트 타입 사용
+        headers: { 'Content-Type': 'application/json' },
+        mode: 'cors',
         body: payload
       });
 
@@ -118,11 +115,12 @@ const App: React.FC = () => {
         setSyncStatus('error');
       }
     } catch (e) {
+      console.error('Push Error:', e);
       setSyncStatus('error');
     }
   }, []);
 
-  // 초기 상태 로드 및 주기적 동기화
+  // 초기 로딩 및 폴링
   useEffect(() => {
     const savedProducts = localStorage.getItem('i-mom-products');
     if (savedProducts) setProducts(JSON.parse(savedProducts));
@@ -136,7 +134,7 @@ const App: React.FC = () => {
 
     if (syncCode) {
       pullFromCloud(syncCode);
-      const interval = setInterval(() => pullFromCloud(syncCode), 30000); // 30초마다 자동 확인
+      const interval = setInterval(() => pullFromCloud(syncCode), 40000); // 40초 주기 동기화
       return () => clearInterval(interval);
     }
   }, [syncCode, pullFromCloud]);
@@ -191,12 +189,12 @@ const App: React.FC = () => {
                  <div className={`w-1.5 h-1.5 rounded-full ${
                     syncStatus === 'syncing' ? 'bg-amber-400 animate-pulse' : 
                     syncStatus === 'connected' ? 'bg-teal-500' : 
-                    syncStatus === 'offline' ? 'bg-slate-300' : 'bg-red-500'
+                    syncStatus === 'new' ? 'bg-blue-400' : 'bg-red-500'
                  }`}></div>
                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
-                   {syncStatus === 'syncing' ? '데이터 동기화 중' : 
+                   {syncStatus === 'syncing' ? '동기화 중...' : 
                     syncStatus === 'connected' ? `연동 활성화 (${lastSyncTime})` : 
-                    syncStatus === 'offline' ? '오프라인 모드' : '연동 확인 필요'}
+                    syncStatus === 'new' ? '새로운 연동 대기중' : '연동 확인 필요 (인터넷 확인)'}
                  </span>
                </div>
             )}
@@ -206,9 +204,9 @@ const App: React.FC = () => {
            {syncCode && (
              <button 
                onClick={() => pushToCloud(syncCode, records, products)}
-               className="px-4 bg-teal-600 text-white text-[10px] font-black rounded-xl shadow-md hover:bg-teal-700 active:scale-95 transition-all"
+               className="px-4 py-2 bg-teal-600 text-white text-[10px] font-black rounded-xl shadow-lg hover:bg-teal-700 active:scale-95 transition-all"
              >
-               지금 데이터 올리기
+               클라우드에 저장
              </button>
            )}
            <button onClick={() => { if(syncCode) pullFromCloud(syncCode); }} className="w-10 h-10 bg-slate-50 border rounded-xl flex items-center justify-center hover:bg-white active:scale-90 transition-all shadow-sm">🔄</button>
