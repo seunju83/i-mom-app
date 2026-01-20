@@ -20,7 +20,7 @@ const RecommendationView: React.FC<RecommendationViewProps> = ({ surveyData, pro
   const [aiNote, setAiNote] = useState<string>('');
   const [isAiLoading, setIsAiLoading] = useState(false);
 
-  // 고도화된 추천 로직 (약사님 요청 반영)
+  // 약사님 요청 추천 로직 적용
   const logicResult = useMemo(() => {
     const { stage, vitaminDLevel, symptoms, isOver35, currentSupplements } = surveyData;
     const autoIds: string[] = [];
@@ -29,18 +29,18 @@ const RecommendationView: React.FC<RecommendationViewProps> = ({ surveyData, pro
     const targetVitDId = (vitaminDLevel === BloodTestResult.NORMAL) ? '5-1' : '5';
     const hasBleeding = symptoms.includes(Symptom.BLEEDING);
 
-    // [로직] 출혈이 없는 경우 오메가3와 유산균 권장
+    // [로직 1] 출혈이 없는 경우 오메가3와 유산균 권장
     if (!hasBleeding) {
       if (!currentSupplements.omega3) {
         // 임신 준비기+35세 이상은 일반 오메가3(4), 나머지는 식물성(3)
         autoOmegaId = (stage === PregnancyStage.PREP && isOver35) ? '4' : '3';
       }
       if (!currentSupplements.probiotics) {
-        autoIds.push('12'); // 유산균
+        autoIds.push('12'); // 유산균 자동 추가
       }
     }
 
-    // 단계별 기본 영양소 추천
+    // [로직 2] 임신 단계별 기본 추천
     if (stage === PregnancyStage.PREP) {
       if (!currentSupplements.folicAcid) autoIds.push('2');
       if (!currentSupplements.vitaminD) autoIds.push(targetVitDId);
@@ -57,11 +57,11 @@ const RecommendationView: React.FC<RecommendationViewProps> = ({ surveyData, pro
     else if (stage === PregnancyStage.LATE || stage === PregnancyStage.LACT) {
       if (!currentSupplements.iron) autoIds.push('6-1');
       if (!currentSupplements.vitaminD) autoIds.push(targetVitDId);
-      // [로직] 임신 후기 및 수유기 칼마디 권장
+      // [로직 3] 임신 후기 및 수유기 칼마디 권장
       if (!currentSupplements.calMag) autoIds.push('7');
     }
 
-    // 증상 기반 추가 추천
+    // [로직 4] 증상 기반 추가
     if (symptoms.includes(Symptom.CONSTIPATION)) autoIds.push('10');
     if (symptoms.includes(Symptom.CRAMPS)) autoIds.push('11');
 
@@ -100,78 +100,91 @@ const RecommendationView: React.FC<RecommendationViewProps> = ({ surveyData, pro
       <div className="lg:col-span-7 space-y-8">
         <div className="bg-teal-600 p-8 rounded-[3rem] text-white shadow-xl relative overflow-hidden">
             <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-10 -mt-10 blur-2xl"></div>
-            <p className="text-xl font-black leading-tight italic min-h-[3rem] relative z-10">"{isAiLoading ? '전문 약사의 영양 설계를 분석 중입니다...' : aiNote}"</p>
+            <p className="text-xl font-black leading-tight italic min-h-[3rem] relative z-10">"{isAiLoading ? '전문 약사의 맞춤 영양 설계를 분석 중입니다...' : aiNote}"</p>
             <p className="mt-4 text-[10px] font-bold opacity-70 uppercase tracking-widest relative z-10">Pharmacist's Message</p>
         </div>
 
-        {/* [전체 상담 내역 요약 섹션] - 모든 내역 및 35세 체크 여부 포함 */}
-        <div className="bg-slate-50 p-8 rounded-[3rem] border-2 border-slate-100 shadow-sm space-y-6">
+        {/* [모든 설문 내역 요약 박스] */}
+        <div className="bg-slate-50 p-8 rounded-[3rem] border-2 border-slate-100 shadow-inner space-y-6">
            <div className="flex justify-between items-center border-b-2 border-slate-200/50 pb-4">
-             <h4 className="text-sm font-black text-slate-800 uppercase tracking-tight flex items-center gap-2">
+             <h4 className="text-sm font-black text-slate-800 flex items-center gap-2">
                <span className="w-2 h-5 bg-teal-500 rounded-full"></span>
                상담 내역 전체 요약
              </h4>
-             <button onClick={onBack} className="text-xs font-black text-teal-600 hover:underline">← 정보 수정하기</button>
+             <button onClick={onBack} className="px-4 py-1.5 bg-white border border-slate-200 rounded-full text-[10px] font-black text-slate-500 hover:bg-slate-50 transition-all">← 정보 수정</button>
            </div>
            
-           <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-6 text-sm">
-              <div className="space-y-4">
+           <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6 text-sm">
+              <div className="space-y-5">
                 <div className="space-y-1">
-                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">소비자 정보</p>
-                  <p className="font-black text-slate-800 text-lg flex items-center gap-2">
-                    {surveyData.customerName} 
-                    <span className="text-xs font-bold text-slate-400">({surveyData.ageGroup})</span>
-                    {surveyData.isOver35 && <span className="px-2 py-0.5 bg-orange-100 text-orange-600 text-[10px] rounded-md font-black">만 35세 이상</span>}
-                  </p>
-                  <p className="text-xs font-bold text-slate-500">{surveyData.phone}</p>
-                  {surveyData.address && <p className="text-[10px] text-slate-400 bg-white p-2 rounded-lg mt-2 border border-slate-100">{surveyData.address}</p>}
+                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">소비자 및 연령</p>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-black text-slate-800 text-lg">{surveyData.customerName}</span>
+                    <span className="px-2 py-0.5 bg-slate-200 text-slate-600 text-[10px] rounded-md font-bold">{surveyData.ageGroup}</span>
+                    {surveyData.isOver35 && (
+                      <span className="px-2 py-0.5 bg-orange-100 text-orange-600 text-[10px] rounded-md font-black shadow-sm border border-orange-200">만 35세 이상 체크됨</span>
+                    )}
+                  </div>
+                  <p className="text-xs font-bold text-slate-500 mt-1">{surveyData.phone}</p>
                 </div>
                 <div className="space-y-1">
-                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">임신/수유 단계</p>
+                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">현재 진행 단계</p>
                   <p className="font-black text-teal-600 text-base">{surveyData.stage}</p>
                 </div>
+                {surveyData.address && (
+                  <div className="space-y-1">
+                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">배송/기록 주소</p>
+                    <p className="text-[11px] font-bold text-slate-600 leading-relaxed bg-white p-3 rounded-xl border border-slate-100">{surveyData.address}</p>
+                  </div>
+                )}
               </div>
 
-              <div className="space-y-4">
+              <div className="space-y-5">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">비타민D 수치</p>
-                    <p className="font-black text-amber-600">{surveyData.vitaminDLevel}</p>
+                    <p className={`font-black ${surveyData.vitaminDLevel.includes('정상') ? 'text-teal-600' : 'text-amber-600'}`}>{surveyData.vitaminDLevel}</p>
                   </div>
                   <div className="space-y-1">
                     <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Hb(빈혈) 수치</p>
-                    <p className="font-black text-red-500">{surveyData.hbLevel}</p>
+                    <p className={`font-black ${surveyData.hbLevel.includes('정상') ? 'text-teal-600' : 'text-red-500'}`}>{surveyData.hbLevel}</p>
                   </div>
                 </div>
                 <div className="space-y-1">
-                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">불편 증상 ({surveyData.symptoms.length})</p>
+                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">호소 중인 불편 증상 ({surveyData.symptoms.length})</p>
                   <div className="flex flex-wrap gap-1 mt-1">
                     {surveyData.symptoms.length > 0 ? surveyData.symptoms.map(s => (
-                      <span key={s} className="px-2 py-0.5 bg-slate-200 text-slate-700 text-[10px] font-black rounded-md">{s}</span>
-                    )) : <span className="text-slate-300 font-bold italic">특이사항 없음</span>}
+                      <span key={s} className="px-2 py-0.5 bg-slate-800 text-white text-[10px] font-bold rounded-md">{s}</span>
+                    )) : <span className="text-slate-300 font-bold italic">특이 증상 없음</span>}
                   </div>
                 </div>
               </div>
 
-              <div className="col-span-full space-y-2 pt-2">
-                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">기존 복용 중인 항목 (한 달분 이상 잔여 시)</p>
+              <div className="col-span-full space-y-2 border-t border-slate-200/50 pt-4">
+                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">기존 복용 중인 항목 (한 달분 이상 잔여)</p>
                 <div className="flex flex-wrap gap-1.5">
                   {Object.entries(surveyData.currentSupplements)
-                    .filter(([key, val]) => val === true && key !== 'prescriptionDrug' && key !== 'others')
+                    .filter(([key, val]) => val === true && !['prescriptionDrug', 'others'].includes(key))
                     .map(([key]) => (
                       <span key={key} className="px-3 py-1 bg-white border border-slate-200 rounded-xl text-[11px] font-black text-slate-600 shadow-sm">
                         {key === 'folicAcid' ? '엽산' : key === 'iron' ? '철분' : key === 'vitaminD' ? '비타민D' : key === 'omega3' ? '오메가3' : key === 'calMag' ? '칼마디' : '유산균'}
                       </span>
                     ))}
-                  {!Object.entries(surveyData.currentSupplements).some(([k,v]) => v === true && k !== 'prescriptionDrug' && k !== 'others') && <span className="text-[10px] text-slate-300 italic">현재 복용 중인 영양제 없음</span>}
+                  {!Object.entries(surveyData.currentSupplements).some(([k,v]) => v === true && !['prescriptionDrug', 'others'].includes(k)) && <span className="text-[10px] text-slate-300 italic">현재 복용 중인 영양제 없음</span>}
                 </div>
                 {(surveyData.currentSupplements.prescriptionDrug || surveyData.notes) && (
-                  <div className="mt-3 bg-white p-4 rounded-2xl border border-slate-100 space-y-2 shadow-sm">
+                  <div className="mt-4 bg-white/60 p-5 rounded-2xl border border-slate-100 space-y-3 shadow-sm">
                     {surveyData.currentSupplements.prescriptionDrug && (
-                      <p className="text-[11px] font-bold text-slate-600">💊 처방약: <span className="text-slate-800 font-black">{surveyData.currentSupplements.prescriptionDrug}</span></p>
+                      <p className="text-[11px] font-bold text-slate-500 flex items-center gap-2">
+                        <span className="bg-amber-100 text-amber-700 px-2 py-0.5 rounded-md text-[9px] font-black">처방약</span>
+                        <span className="text-slate-800 font-black">{surveyData.currentSupplements.prescriptionDrug}</span>
+                      </p>
                     )}
                     {surveyData.notes && (
-                      <p className="text-[11px] font-bold text-slate-600">📝 비고: <span className="text-slate-800 font-black italic">"{surveyData.notes}"</span></p>
+                      <p className="text-[11px] font-bold text-slate-500 flex items-start gap-2">
+                        <span className="bg-slate-200 text-slate-600 px-2 py-0.5 rounded-md text-[9px] font-black shrink-0">비고</span>
+                        <span className="text-slate-700 italic font-bold">"{surveyData.notes}"</span>
+                      </p>
                     )}
                   </div>
                 )}
@@ -179,11 +192,10 @@ const RecommendationView: React.FC<RecommendationViewProps> = ({ surveyData, pro
            </div>
         </div>
 
-        {/* 제품 선택 영역 */}
         <div className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm">
            <h3 className="text-lg font-black text-slate-800 mb-6 flex items-center justify-between">
               맞춤 영양제 설계 리스트
-              <span className="text-[10px] font-black text-slate-300">클릭하여 개별 조정 가능</span>
+              <span className="text-[10px] font-bold text-slate-400">약사 판단에 따라 추가/제외 가능</span>
            </h3>
            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {products.filter(p => p.isActive).map(product => {
@@ -211,7 +223,7 @@ const RecommendationView: React.FC<RecommendationViewProps> = ({ surveyData, pro
         <div className="sticky top-24 space-y-4">
           <div className="bg-white p-10 rounded-[4rem] border border-slate-100 shadow-2xl">
               <div className="mb-6 text-center">
-                <span className="text-[10px] font-black text-teal-500 border-2 border-teal-500 px-3 py-1 rounded-full uppercase tracking-widest">Final Selection</span>
+                <span className="text-[10px] font-black text-teal-500 border-2 border-teal-500 px-3 py-1 rounded-full uppercase tracking-widest">Counseling Result</span>
                 <h3 className="text-2xl font-black text-slate-800 mt-4">{surveyData.customerName}님 최종 설계</h3>
               </div>
               
@@ -227,15 +239,15 @@ const RecommendationView: React.FC<RecommendationViewProps> = ({ surveyData, pro
               </div>
               
               <div className="flex justify-between items-end mb-10 px-4">
-                  <span className="text-xs font-black text-slate-400">총 구매 합계</span>
+                  <span className="text-xs font-black text-slate-400">최종 상담 결제액</span>
                   <p className="text-3xl font-black text-teal-600 leading-none">{totalPrice.toLocaleString()}원</p>
               </div>
               
-              <button onClick={handleSave} className="w-full py-6 bg-slate-900 text-white font-black rounded-3xl active:scale-95 transition-all shadow-2xl hover:bg-black">설계 완료 및 기록 저장</button>
+              <button onClick={handleSave} className="w-full py-6 bg-slate-900 text-white font-black rounded-3xl active:scale-95 transition-all shadow-2xl hover:bg-black">상담 저장 및 소분 기록지 보기</button>
           </div>
           
           <button onClick={onBack} className="w-full py-5 bg-white text-slate-400 border-2 border-slate-100 font-black rounded-3xl hover:bg-slate-50 transition-all flex items-center justify-center gap-2">
-             <span>←</span> 이전으로 (설문 내용 수정)
+             <span>←</span> 이전으로 (정보 수정)
           </button>
         </div>
       </div>
