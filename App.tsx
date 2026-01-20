@@ -13,9 +13,9 @@ const App: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [records, setRecords] = useState<ConsultationRecord[]>([]);
   const [surveyData, setSurveyData] = useState<SurveyData | null>(null);
-  const [pharmacists, setPharmacists] = useState<Pharmacist[]>([{ id: '1', name: '아이맘 약사', isActive: true }]);
+  
   const [pharmacyConfig, setPharmacyConfig] = useState<PharmacyConfig>(() => {
-    const saved = localStorage.getItem('i-mom-config-v3');
+    const saved = localStorage.getItem('i-mom-v5-config');
     return saved ? JSON.parse(saved) : {
       pharmacyName: '아이맘약국',
       currentPharmacistId: '1',
@@ -24,13 +24,12 @@ const App: React.FC = () => {
     };
   });
   
-  // 캐시 충돌 방지를 위해 v3 전용 키 사용
-  const [sbUrl, setSbUrl] = useState(localStorage.getItem('sb_url_v3') || '');
-  const [sbKey, setSbKey] = useState(localStorage.getItem('sb_key_v3') || '');
+  // v5 전용 키 (캐시 무력화)
+  const [sbUrl, setSbUrl] = useState(localStorage.getItem('v5_url') || '');
+  const [sbKey, setSbKey] = useState(localStorage.getItem('v5_key') || '');
   const [syncStatus, setSyncStatus] = useState<'connected' | 'offline' | 'error' | 'syncing'>('offline');
-  const [lastSyncTime, setLastSyncTime] = useState<string>('');
 
-  const supabaseClient = useMemo(() => {
+  const supabase = useMemo(() => {
     if (sbUrl && sbKey) {
       try { return createClient(sbUrl, sbKey); } 
       catch (e) { return null; }
@@ -42,93 +41,75 @@ const App: React.FC = () => {
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
 
-  const fetchSync = useCallback(async () => {
-    if (!supabaseClient) {
+  const handleSync = useCallback(async () => {
+    if (!supabase) {
       setSyncStatus('offline');
-      const localProducts = localStorage.getItem('i-mom-products-v3');
-      const localRecords = localStorage.getItem('i-mom-records-v3');
-      setProducts(localProducts ? JSON.parse(localProducts) : INITIAL_PRODUCTS);
-      setRecords(localRecords ? JSON.parse(localRecords) : []);
+      const localP = localStorage.getItem('i-mom-v5-products');
+      const localR = localStorage.getItem('i-mom-v5-records');
+      setProducts(localP ? JSON.parse(localP) : INITIAL_PRODUCTS);
+      setRecords(localR ? JSON.parse(localR) : []);
       return;
     }
 
     try {
       setSyncStatus('syncing');
-      // 제품 데이터 가져오기
-      const { data: dbP } = await supabaseClient.from('products').select('*');
+      const { data: dbP } = await supabase.from('products').select('*');
       if (dbP && dbP.length > 0) {
         setProducts(dbP);
-        localStorage.setItem('i-mom-products-v3', JSON.stringify(dbP));
+        localStorage.setItem('i-mom-v5-products', JSON.stringify(dbP));
       } else if (products.length > 0) {
-        await supabaseClient.from('products').upsert(products);
+        await supabase.from('products').upsert(products);
       } else {
         setProducts(INITIAL_PRODUCTS);
       }
 
-      // 상담 기록 가져오기
-      const { data: dbR } = await supabaseClient.from('consultations').select('*').order('date', { ascending: false });
+      const { data: dbR } = await supabase.from('consultations').select('*').order('date', { ascending: false });
       if (dbR) {
         setRecords(dbR);
-        localStorage.setItem('i-mom-records-v3', JSON.stringify(dbR));
+        localStorage.setItem('i-mom-v5-records', JSON.stringify(dbR));
       }
-
       setSyncStatus('connected');
-      setLastSyncTime(new Date().toLocaleTimeString());
     } catch (e) {
       setSyncStatus('error');
     }
-  }, [supabaseClient, products.length]);
+  }, [supabase, products.length]);
 
   useEffect(() => {
-    fetchSync();
-  }, [supabaseClient, fetchSync]);
+    handleSync();
+  }, [supabase, handleSync]);
 
-  const handleUpdateRecords = async (newRecords: ConsultationRecord[]) => {
-    setRecords(newRecords);
-    localStorage.setItem('i-mom-records-v3', JSON.stringify(newRecords));
-    if (supabaseClient) await supabaseClient.from('consultations').upsert(newRecords);
-  };
-
-  const handleUpdateProducts = async (newProducts: Product[]) => {
-    setProducts(newProducts);
-    localStorage.setItem('i-mom-products-v3', JSON.stringify(newProducts));
-    if (supabaseClient) await supabaseClient.from('products').upsert(newProducts);
-  };
-
-  const handleSetSbConfig = (url: string, key: string) => {
+  const onSaveSbConfig = (url: string, key: string) => {
+    localStorage.setItem('v5_url', url);
+    localStorage.setItem('v5_key', key);
     setSbUrl(url);
     setSbKey(key);
-    localStorage.setItem('sb_url_v3', url);
-    localStorage.setItem('sb_key_v3', key);
-    alert('설정이 저장되었습니다. 페이지가 새로고침됩니다.');
-    window.location.reload(); // 강제 새로고침으로 캐시 무력화
+    alert('v5.0 서버 설정이 저장되었습니다. 앱을 재시작합니다.');
+    window.location.reload(); 
   };
 
   return (
-    <div className="min-h-screen flex flex-col max-w-[1024px] mx-auto bg-white shadow-2xl relative">
-      <header className="bg-white/95 backdrop-blur-md p-6 sticky top-0 z-50 flex justify-between items-center border-b border-slate-100">
+    <div className={`min-h-screen flex flex-col max-w-[1024px] mx-auto shadow-2xl relative ${currentView === 'home' ? 'bg-teal-900' : 'bg-white'}`}>
+      {/* v5.0 버전 확인용 긴급 배너 */}
+      <div className="bg-yellow-400 text-black text-[10px] font-black text-center py-2 tracking-tighter uppercase">
+        ⚠️ EMERGENCY UPDATE v5.0 - CLOUD SYNC INTERFACE ENABLED ⚠️
+      </div>
+
+      <header className="bg-white p-6 sticky top-0 z-50 flex justify-between items-center border-b shadow-sm">
         <div className="cursor-pointer flex items-center gap-3" onClick={() => setCurrentView('home')}>
-          <div className="w-10 h-10 rounded-full bg-teal-600 flex items-center justify-center text-white font-black text-[10px] shadow-lg">아이맘</div>
+          <div className="w-10 h-10 rounded-full bg-teal-600 flex items-center justify-center text-white font-black text-[10px]">아이맘</div>
           <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl font-black text-slate-800 tracking-tighter">{pharmacyConfig.pharmacyName}</h1>
-              <span className="px-2 py-0.5 bg-orange-100 text-orange-600 text-[8px] font-black rounded-md uppercase">Final v3.0</span>
-            </div>
+            <h1 className="text-xl font-black text-slate-800">{pharmacyConfig.pharmacyName}</h1>
             <div className="flex items-center gap-1.5">
-              <div className={`w-1.5 h-1.5 rounded-full ${syncStatus === 'connected' ? 'bg-teal-500' : 'bg-slate-300'}`}></div>
               <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
-                {syncStatus === 'connected' ? `클라우드 연결됨 (${lastSyncTime})` : '오프라인 (설정필요)'}
+                {syncStatus === 'connected' ? 'CLOUD CONNECTED' : 'OFFLINE MODE'}
               </span>
             </div>
           </div>
         </div>
-        <div className="flex gap-2">
-           <button onClick={fetchSync} className="w-10 h-10 bg-slate-50 border rounded-xl flex items-center justify-center hover:bg-white text-sm">🔄</button>
-           <button onClick={() => isAdminAuthenticated ? setCurrentView('admin') : setShowAdminLogin(true)} className="w-10 h-10 bg-slate-50 border rounded-xl flex items-center justify-center hover:bg-white shadow-sm">⚙️</button>
-        </div>
+        <button onClick={() => isAdminAuthenticated ? setCurrentView('admin') : setShowAdminLogin(true)} className="w-12 h-12 bg-slate-100 rounded-2xl flex items-center justify-center text-xl">⚙️</button>
       </header>
 
-      <main className="flex-1 p-6">
+      <main className="flex-1">
         {currentView === 'home' && <HomeView onStart={() => setCurrentView('survey')} />}
         {currentView === 'survey' && <SurveyView onComplete={(data) => { setSurveyData(data); setCurrentView('recommendation'); }} products={products} />}
         {currentView === 'recommendation' && surveyData && (
@@ -137,42 +118,42 @@ const App: React.FC = () => {
              const newRecord: ConsultationRecord = {
                 id: `RE-${Date.now()}`, date: new Date().toISOString(), pharmacistName: pharmacyConfig.managerName, customerName: surveyData?.customerName || '고객', surveyData: surveyData!, recommendedProductNames: names, selectedProducts: selectedFull, totalPrice: total, purchaseStatus: '구매 완료', counselingMethod: '태블릿 대면 상담', dispensingDays: 30
              };
-             handleUpdateRecords([newRecord, ...records]);
+             const updated = [newRecord, ...records];
+             setRecords(updated);
+             localStorage.setItem('i-mom-v5-records', JSON.stringify(updated));
+             if (supabase) supabase.from('consultations').upsert(newRecord);
              return newRecord;
           }} onBack={() => setCurrentView('survey')} onReturnHome={() => setCurrentView('home')} />
         )}
         {currentView === 'admin' && (
           <AdminPanel 
-            products={products} records={records} pharmacists={pharmacists} config={pharmacyConfig}
-            onUpdateProducts={handleUpdateProducts} onUpdateRecords={handleUpdateRecords} onUpdatePharmacists={setPharmacists} onUpdateConfig={(c) => { setPharmacyConfig(c); localStorage.setItem('i-mom-config-v3', JSON.stringify(c)); }}
-            onForcePush={fetchSync}
+            products={products} records={records} pharmacists={[]} config={pharmacyConfig}
+            onUpdateProducts={(p) => { setProducts(p); localStorage.setItem('i-mom-v5-products', JSON.stringify(p)); if(supabase) supabase.from('products').upsert(p); }}
+            onUpdateRecords={(r) => { setRecords(r); localStorage.setItem('i-mom-v5-records', JSON.stringify(r)); if(supabase) supabase.from('consultations').upsert(r); }}
+            onUpdatePharmacists={()=>{}} onUpdateConfig={(c) => { setPharmacyConfig(c); localStorage.setItem('i-mom-v5-config', JSON.stringify(c)); }}
+            onForcePush={handleSync}
             sbConfig={{ url: sbUrl, key: sbKey }}
-            onSetSbConfig={handleSetSbConfig}
+            onSetSbConfig={onSaveSbConfig}
           />
         )}
       </main>
 
       {showAdminLogin && (
-        <div className="fixed inset-0 bg-slate-900/40 z-[200] flex items-center justify-center p-6 backdrop-blur-sm">
-          <div className="bg-white rounded-[2.5rem] w-full max-w-sm p-10 shadow-2xl">
-            <h3 className="text-xl font-black text-center mb-6">관리자 로그인</h3>
+        <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-6 backdrop-blur-md">
+          <div className="bg-white rounded-[3rem] w-full max-w-sm p-12 shadow-2xl">
+            <h3 className="text-xl font-black text-center mb-8">관리자 비밀번호</h3>
             <form onSubmit={(e) => {
               e.preventDefault();
               if (passwordInput === '1234') { setIsAdminAuthenticated(true); setShowAdminLogin(false); setCurrentView('admin'); setPasswordInput(''); }
               else alert('비밀번호가 틀렸습니다.');
-            }} className="space-y-4">
-              <input type="password" autoFocus className="w-full p-4 bg-slate-50 border-2 rounded-2xl text-center text-2xl tracking-[0.5em] outline-none" value={passwordInput} onChange={e => setPasswordInput(e.target.value)} placeholder="••••" />
-              <button type="submit" className="w-full py-4 bg-teal-600 text-white font-black rounded-2xl">확인</button>
-              <button type="button" onClick={() => setShowAdminLogin(false)} className="w-full py-2 text-slate-400 text-sm font-bold">취소</button>
+            }} className="space-y-6">
+              <input type="password" autoFocus className="w-full p-5 bg-slate-100 border-none rounded-2xl text-center text-3xl tracking-[0.5em]" value={passwordInput} onChange={e => setPasswordInput(e.target.value)} placeholder="••••" />
+              <button type="submit" className="w-full py-5 bg-teal-600 text-white font-black rounded-2xl text-lg">확인</button>
+              <button type="button" onClick={() => setShowAdminLogin(false)} className="w-full text-slate-400 font-bold text-sm mt-4">닫기</button>
             </form>
           </div>
         </div>
       )}
-
-      <footer className="bg-white border-t p-8 text-center">
-        <p className="text-[10px] text-slate-400 font-black mb-2">{DISCLAIMER}</p>
-        <p className="text-xs text-slate-600 font-bold">{pharmacyConfig.pharmacyName}</p>
-      </footer>
     </div>
   );
 };
