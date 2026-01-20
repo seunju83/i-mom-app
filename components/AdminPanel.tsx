@@ -97,19 +97,22 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
              </div>
              <div className="space-y-4">
                 <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Supabase URL</label>
-                  <input type="text" value={tempSbUrl} onChange={e => setTempSbUrl(e.target.value)} placeholder="https://xxxx.supabase.co" className="w-full p-4 bg-white/10 border-2 border-white/10 rounded-2xl outline-none focus:border-teal-500 font-bold text-white text-sm" />
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">1. Supabase 프로젝트 주소 (Project URL)</label>
+                  <input type="text" value={tempSbUrl} onChange={e => setTempSbUrl(e.target.value)} placeholder="예: https://abcdefghijkl.supabase.co" className="w-full p-4 bg-white/10 border-2 border-white/10 rounded-2xl outline-none focus:border-teal-500 font-bold text-white text-sm" />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Anon Public Key</label>
-                  <input type="password" value={tempSbKey} onChange={e => setTempSbKey(e.target.value)} placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." className="w-full p-4 bg-white/10 border-2 border-white/10 rounded-2xl outline-none focus:border-teal-500 font-bold text-white text-sm" />
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">2. API 공개 키 (Anon Public Key)</label>
+                  <input type="password" value={tempSbKey} onChange={e => setTempSbKey(e.target.value)} placeholder="비밀키를 입력하세요 (eyJ...)" className="w-full p-4 bg-white/10 border-2 border-white/10 rounded-2xl outline-none focus:border-teal-500 font-bold text-white text-sm" />
                 </div>
                 <button onClick={() => onSetSbConfig?.(tempSbUrl, tempSbKey)} className="w-full py-4 bg-teal-600 text-white font-black rounded-2xl shadow-lg hover:bg-teal-500 transition-all mt-2">설정 저장 및 연동</button>
              </div>
-             <p className="text-[10px] text-slate-400 leading-relaxed font-medium">
-                * Supabase 대시보드에서 Project Settings > API 메뉴의 정보를 입력하세요.<br />
-                * 테이블 `products`와 `consultations`가 생성되어 있어야 합니다.
-             </p>
+             <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
+                <p className="text-[11px] text-teal-400 font-black mb-1">💡 도움말</p>
+                <p className="text-[10px] text-slate-400 leading-relaxed font-medium">
+                  Supabase 대시보드 -> Settings -> API 메뉴에서 위 정보를 찾을 수 있습니다.<br />
+                  연동 성공 시 상단 헤더에 <span className="text-teal-400">"클라우드 동기화 완료"</span> 메시지가 뜹니다.
+                </p>
+             </div>
           </div>
 
           <div className="bg-white p-8 rounded-[3rem] border space-y-6 shadow-sm">
