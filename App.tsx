@@ -215,6 +215,7 @@ const App: React.FC = () => {
             products={products} 
             config={pharmacyConfig}
             onSave={handleSaveConsultation} 
+            onBack={() => setCurrentView('survey')}
             onReturnHome={() => setCurrentView('home')}
           />
         )}
