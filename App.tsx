@@ -24,9 +24,9 @@ const App: React.FC = () => {
     };
   });
   
-  // Supabase 설정 상태
-  const [supabaseUrl, setSupabaseUrl] = useState(localStorage.getItem('i-mom-sb-url') || '');
-  const [supabaseKey, setSupabaseKey] = useState(localStorage.getItem('i-mom-sb-key') || '');
+  // Supabase 설정 (로컬 스토리지에서 직접 관리)
+  const [supabaseUrl, setSupabaseUrl] = useState(localStorage.getItem('i-mom-sb-url-v2') || '');
+  const [supabaseKey, setSupabaseKey] = useState(localStorage.getItem('i-mom-sb-key-v2') || '');
   const [syncStatus, setSyncStatus] = useState<'connected' | 'offline' | 'error' | 'syncing'>('offline');
   const [lastSyncTime, setLastSyncTime] = useState<string>('');
 
@@ -54,18 +54,18 @@ const App: React.FC = () => {
 
     try {
       setSyncStatus('syncing');
-      // 제품 데이터
-      const { data: dbProducts } = await supabase.from('products').select('*');
+      // 제품 데이터 동기화
+      const { data: dbProducts, error: pError } = await supabase.from('products').select('*');
       if (dbProducts && dbProducts.length > 0) {
         setProducts(dbProducts);
         localStorage.setItem('i-mom-products', JSON.stringify(dbProducts));
-      } else if (products.length > 0) {
+      } else if (!pError && products.length > 0) {
         await supabase.from('products').upsert(products);
-      } else {
+      } else if (!dbProducts || dbProducts.length === 0) {
         setProducts(INITIAL_PRODUCTS);
       }
 
-      // 상담 기록
+      // 상담 기록 동기화
       const { data: dbRecords } = await supabase.from('consultations').select('*').order('date', { ascending: false });
       if (dbRecords) {
         setRecords(dbRecords);
@@ -89,7 +89,6 @@ const App: React.FC = () => {
     if (supabase) {
       await supabase.from('consultations').upsert(newRecords);
       setSyncStatus('connected');
-      setLastSyncTime(new Date().toLocaleTimeString());
     }
   };
 
@@ -99,35 +98,15 @@ const App: React.FC = () => {
     if (supabase) {
       await supabase.from('products').upsert(newProducts);
       setSyncStatus('connected');
-      setLastSyncTime(new Date().toLocaleTimeString());
     }
-  };
-
-  const handleSaveConsultation = (selectedProductIds: string[], recommendedNames: string[], totalPrice: number): ConsultationRecord => {
-    const selectedFull = products.filter(p => selectedProductIds.includes(p.id));
-    const newRecord: ConsultationRecord = {
-      id: `RE-${Date.now()}`,
-      date: new Date().toISOString(),
-      pharmacistName: pharmacyConfig.managerName,
-      customerName: surveyData?.customerName || '고객',
-      surveyData: surveyData!,
-      recommendedProductNames: recommendedNames,
-      selectedProducts: selectedFull,
-      totalPrice: totalPrice,
-      purchaseStatus: '구매 완료',
-      counselingMethod: '태블릿 대면 상담',
-      dispensingDays: 30
-    };
-    handleUpdateRecords([newRecord, ...records]);
-    return newRecord;
   };
 
   const handleSetSupabaseConfig = (url: string, key: string) => {
     setSupabaseUrl(url);
     setSupabaseKey(key);
-    localStorage.setItem('i-mom-sb-url', url);
-    localStorage.setItem('i-mom-sb-key', key);
-    alert('연동 설정이 저장되었습니다.');
+    localStorage.setItem('i-mom-sb-url-v2', url);
+    localStorage.setItem('i-mom-sb-key-v2', key);
+    alert('새로운 연동 설정이 적용되었습니다.');
   };
 
   return (
@@ -136,11 +115,14 @@ const App: React.FC = () => {
         <div className="cursor-pointer flex items-center gap-3" onClick={() => setCurrentView('home')}>
           <div className="w-10 h-10 rounded-full bg-teal-600 flex items-center justify-center text-white font-black text-[10px] shadow-lg">아이맘</div>
           <div>
-            <h1 className="text-xl font-black text-slate-800 tracking-tighter">{pharmacyConfig.pharmacyName}</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-black text-slate-800 tracking-tighter">{pharmacyConfig.pharmacyName}</h1>
+              <span className="px-2 py-0.5 bg-teal-100 text-teal-700 text-[8px] font-black rounded-md uppercase">v2.1 Cloud</span>
+            </div>
             <div className="flex items-center gap-1.5">
               <div className={`w-1.5 h-1.5 rounded-full ${syncStatus === 'connected' ? 'bg-teal-500' : 'bg-slate-300'}`}></div>
               <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
-                {syncStatus === 'connected' ? `동기화 완료 (${lastSyncTime})` : '오프라인 모드'}
+                {syncStatus === 'connected' ? `동기화 완료 (${lastSyncTime})` : '설정 필요 (오프라인)'}
               </span>
             </div>
           </div>
@@ -155,7 +137,14 @@ const App: React.FC = () => {
         {currentView === 'home' && <HomeView onStart={() => setCurrentView('survey')} />}
         {currentView === 'survey' && <SurveyView onComplete={(data) => { setSurveyData(data); setCurrentView('recommendation'); }} products={products} />}
         {currentView === 'recommendation' && surveyData && (
-          <RecommendationView surveyData={surveyData} products={products} config={pharmacyConfig} onSave={handleSaveConsultation} onBack={() => setCurrentView('survey')} onReturnHome={() => setCurrentView('home')} />
+          <RecommendationView surveyData={surveyData} products={products} config={pharmacyConfig} onSave={(ids, names, total) => {
+             const selectedFull = products.filter(p => ids.includes(p.id));
+             const newRecord: ConsultationRecord = {
+                id: `RE-${Date.now()}`, date: new Date().toISOString(), pharmacistName: pharmacyConfig.managerName, customerName: surveyData?.customerName || '고객', surveyData: surveyData!, recommendedProductNames: names, selectedProducts: selectedFull, totalPrice: total, purchaseStatus: '구매 완료', counselingMethod: '태블릿 대면 상담', dispensingDays: 30
+             };
+             handleUpdateRecords([newRecord, ...records]);
+             return newRecord;
+          }} onBack={() => setCurrentView('survey')} onReturnHome={() => setCurrentView('home')} />
         )}
         {currentView === 'admin' && (
           <AdminPanel 
