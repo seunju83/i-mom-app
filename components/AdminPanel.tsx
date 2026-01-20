@@ -15,18 +15,22 @@ interface AdminPanelProps {
   onUpdateConfig: (config: PharmacyConfig) => void;
   onSetSyncCode: (code: string) => void;
   onForcePush: () => void;
+  sbConfig?: { url: string, key: string };
+  onSetSbConfig?: (url: string, key: string) => void;
 }
 
 const AdminPanel: React.FC<AdminPanelProps> = ({ 
     products, records, pharmacists, config, syncCode,
     onUpdateProducts, onUpdateRecords, onUpdatePharmacists, onUpdateConfig,
-    onSetSyncCode, onForcePush
+    onSetSyncCode, onForcePush, sbConfig, onSetSbConfig
 }) => {
   const [tab, setTab] = useState<'products' | 'records' | 'settings'>('products');
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [viewingRecord, setViewingRecord] = useState<ConsultationRecord | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  const [tempSbUrl, setTempSbUrl] = useState(sbConfig?.url || '');
+  const [tempSbKey, setTempSbKey] = useState(sbConfig?.key || '');
 
   const filteredRecords = useMemo(() => {
     return records.filter(r => 
@@ -42,7 +46,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   };
 
   const exportData = () => {
-    const dataStr = JSON.stringify({ products, records, config, syncCode });
+    const dataStr = JSON.stringify({ products, records, config });
     const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
     const linkElement = document.createElement('a');
     linkElement.setAttribute('href', dataUri);
@@ -88,17 +92,31 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
         <div className="space-y-6 animate-in slide-in-from-bottom">
           <div className="bg-slate-900 p-8 rounded-[3rem] text-white space-y-6 shadow-xl">
              <div className="flex justify-between items-center">
-               <h4 className="text-xl font-black">🔗 기기간 연동 (Cloud Sync)</h4>
-               <button onClick={onForcePush} className="px-4 py-2 bg-teal-500 text-white rounded-xl text-[10px] font-black animate-pulse">지금 서버에 동기화</button>
+               <h4 className="text-xl font-black">🔗 Supabase 클라우드 연동</h4>
+               <button onClick={onForcePush} className="px-4 py-2 bg-teal-500 text-white rounded-xl text-[10px] font-black hover:scale-105 active:scale-95 transition-all">지금 데이터 동기화</button>
              </div>
-             <input type="text" value={syncCode} onChange={e => onSetSyncCode(e.target.value)} placeholder="약국 고유 코드 입력 (예: imom01)" className="w-full p-5 bg-white/10 border-2 border-white/10 rounded-2xl outline-none focus:border-teal-500 font-black text-white text-lg" />
+             <div className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Supabase URL</label>
+                  <input type="text" value={tempSbUrl} onChange={e => setTempSbUrl(e.target.value)} placeholder="https://xxxx.supabase.co" className="w-full p-4 bg-white/10 border-2 border-white/10 rounded-2xl outline-none focus:border-teal-500 font-bold text-white text-sm" />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Anon Public Key</label>
+                  <input type="password" value={tempSbKey} onChange={e => setTempSbKey(e.target.value)} placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." className="w-full p-4 bg-white/10 border-2 border-white/10 rounded-2xl outline-none focus:border-teal-500 font-bold text-white text-sm" />
+                </div>
+                <button onClick={() => onSetSbConfig?.(tempSbUrl, tempSbKey)} className="w-full py-4 bg-teal-600 text-white font-black rounded-2xl shadow-lg hover:bg-teal-500 transition-all mt-2">설정 저장 및 연동</button>
+             </div>
+             <p className="text-[10px] text-slate-400 leading-relaxed font-medium">
+                * Supabase 대시보드에서 Project Settings > API 메뉴의 정보를 입력하세요.<br />
+                * 테이블 `products`와 `consultations`가 생성되어 있어야 합니다.
+             </p>
           </div>
 
           <div className="bg-white p-8 rounded-[3rem] border space-y-6 shadow-sm">
              <h4 className="text-xl font-black text-slate-800">💾 데이터 수동 백업</h4>
              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <button onClick={exportData} className="p-5 bg-slate-800 text-white rounded-2xl font-black text-sm">내보내기 (JSON 파일로 저장)</button>
-                <label className="p-5 bg-slate-100 text-slate-600 rounded-2xl font-black text-sm text-center cursor-pointer">
+                <button onClick={exportData} className="p-5 bg-slate-800 text-white rounded-2xl font-black text-sm hover:bg-black transition-all">내보내기 (JSON 파일로 저장)</button>
+                <label className="p-5 bg-slate-100 text-slate-600 rounded-2xl font-black text-sm text-center cursor-pointer hover:bg-slate-200 transition-all">
                    가져오기 (파일로 복구)
                    <input type="file" className="hidden" accept=".json" onChange={importData} />
                 </label>
@@ -222,7 +240,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                   </div>
                 ))}
               </div>
-              <button type="submit" className="w-full py-5 bg-teal-600 text-white font-black rounded-3xl shadow-xl hover:bg-teal-700 transition-all">저장 및 동기화</button>
+              <button type="submit" className="w-full py-5 bg-teal-600 text-white font-black rounded-3xl shadow-xl hover:bg-teal-700 transition-all">저장 및 클라우드 동기화</button>
             </form>
           </div>
         </div>
