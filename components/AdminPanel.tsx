@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo } from 'react';
-import { Product, ConsultationRecord, Pharmacist, PharmacyConfig } from '../types';
+import { Product, ConsultationRecord, Pharmacist, PharmacyConfig, PillType, IngredientInfo } from '../types';
 import RecordDetailModal from './RecordDetailModal';
 
 interface AdminPanelProps {
@@ -50,6 +50,26 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
       lastDate: customerRecords[0].date
     })).filter(c => c.name.includes(searchQuery) || c.phone.includes(searchQuery));
   }, [records, searchQuery]);
+
+  // 성분 추가/삭제 핸들러
+  const addIngredient = () => {
+    if (!editingProduct) return;
+    const newIngredients = [...editingProduct.ingredients, { name: '', amount: 0, unit: 'mg' }];
+    setEditingProduct({ ...editingProduct, ingredients: newIngredients });
+  };
+
+  const removeIngredient = (index: number) => {
+    if (!editingProduct) return;
+    const newIngredients = editingProduct.ingredients.filter((_, i) => i !== index);
+    setEditingProduct({ ...editingProduct, ingredients: newIngredients });
+  };
+
+  const updateIngredient = (index: number, field: keyof IngredientInfo, value: any) => {
+    if (!editingProduct) return;
+    const newIngredients = [...editingProduct.ingredients];
+    newIngredients[index] = { ...newIngredients[index], [field]: value };
+    setEditingProduct({ ...editingProduct, ingredients: newIngredients });
+  };
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
@@ -141,7 +161,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
         <div className="space-y-4">
           <div className="flex justify-between items-center">
              <h3 className="font-black text-slate-800">제품 관리 ({products.length})</h3>
-             <button onClick={() => setEditingProduct({ id: '', name: '', images: ['https://picsum.photos/seed/new/300/300'], price: 0, storage: '상온', usage: '', ingredients: [], isActive: true, expirationDate: '', pillType: 'round-white' })} className="px-4 py-2 bg-teal-600 text-white rounded-xl text-xs font-black">+ 새 제품 등록</button>
+             <button onClick={() => setEditingProduct({ id: '', name: '', images: ['https://picsum.photos/seed/new/300/300'], price: 0, storage: '상온', usage: '', ingredients: [], isActive: true, expirationDate: new Date().toISOString().split('T')[0], pillType: 'round-white' })} className="px-4 py-2 bg-teal-600 text-white rounded-xl text-xs font-black">+ 새 제품 등록</button>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
              {products.map(p => (
@@ -223,11 +243,12 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
 
       {editingProduct && (
         <div className="fixed inset-0 bg-slate-900/60 z-[300] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-white w-full max-w-xl rounded-[3rem] shadow-2xl flex flex-col overflow-hidden max-h-[85vh]">
-            <div className="p-6 border-b bg-slate-50 flex justify-between items-center">
-              <h3 className="text-xl font-black">{editingProduct.id ? '제품 정보 수정' : '새 제품 등록'}</h3>
+          <div className="bg-white w-full max-w-2xl rounded-[3rem] shadow-2xl flex flex-col overflow-hidden max-h-[90vh]">
+            <div className="p-6 border-b bg-slate-50 flex justify-between items-center sticky top-0 bg-slate-50 z-10">
+              <h3 className="text-xl font-black">{editingProduct.id ? '제품 상세 정보 수정' : '새 제품 등록'}</h3>
               <button onClick={() => setEditingProduct(null)} className="text-slate-400 font-bold text-xl">✕</button>
             </div>
+            
             <form onSubmit={(e) => {
                e.preventDefault();
                const updated = editingProduct.id 
@@ -235,22 +256,101 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                  : [...products, { ...editingProduct, id: `P-${Date.now()}` }];
                onUpdateProducts(updated);
                setEditingProduct(null);
-            }} className="flex-1 overflow-y-auto p-8 space-y-6">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-black text-slate-400">제품명</label>
-                  <input required value={editingProduct.name} onChange={e => setEditingProduct({...editingProduct, name: e.target.value})} className="p-4 bg-slate-50 rounded-2xl font-bold border-2 border-transparent focus:border-teal-500 outline-none" />
+            }} className="flex-1 overflow-y-auto p-8 space-y-8">
+              
+              {/* 기본 정보 섹션 */}
+              <div className="space-y-4">
+                <h4 className="text-xs font-black text-teal-600 uppercase tracking-widest border-l-4 border-teal-500 pl-2">기본 정보</h4>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">제품명 *</label>
+                    <input required value={editingProduct.name} onChange={e => setEditingProduct({...editingProduct, name: e.target.value})} className="p-4 bg-slate-50 rounded-2xl font-bold border-2 border-transparent focus:border-teal-500 outline-none" placeholder="제품명을 입력하세요" />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">판매 가격(원) *</label>
+                    <input type="number" required value={editingProduct.price} onChange={e => setEditingProduct({...editingProduct, price: parseInt(e.target.value) || 0})} className="p-4 bg-slate-50 rounded-2xl font-bold border-2 border-transparent focus:border-teal-500 outline-none" />
+                  </div>
                 </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-black text-slate-400">가격(원)</label>
-                  <input type="number" required value={editingProduct.price} onChange={e => setEditingProduct({...editingProduct, price: parseInt(e.target.value) || 0})} className="p-4 bg-slate-50 rounded-2xl font-bold border-2 border-transparent focus:border-teal-500 outline-none" />
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">보관 방법</label>
+                    <select value={editingProduct.storage} onChange={e => setEditingProduct({...editingProduct, storage: e.target.value as any})} className="p-4 bg-slate-50 rounded-2xl font-bold outline-none">
+                      <option value="상온">상온 보관</option>
+                      <option value="냉장">냉장 보관</option>
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">유효기간 *</label>
+                    <input type="date" required value={editingProduct.expirationDate} onChange={e => setEditingProduct({...editingProduct, expirationDate: e.target.value})} className="p-4 bg-slate-50 rounded-2xl font-bold border-2 border-transparent focus:border-teal-500 outline-none" />
+                  </div>
                 </div>
               </div>
-              <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-black text-slate-400">복용 방법</label>
-                  <input value={editingProduct.usage} onChange={e => setEditingProduct({...editingProduct, usage: e.target.value})} placeholder="예: 1일 1회 식후 복용" className="p-4 bg-slate-50 rounded-2xl font-bold border-2 border-transparent focus:border-teal-500 outline-none" />
+
+              {/* 이미지 및 복용법 */}
+              <div className="space-y-4">
+                <h4 className="text-xs font-black text-teal-600 uppercase tracking-widest border-l-4 border-teal-500 pl-2">이미지 및 복용법</h4>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase">제품 이미지 URL</label>
+                  <div className="flex gap-3 items-center">
+                    <input value={editingProduct.images[0]} onChange={e => setEditingProduct({...editingProduct, images: [e.target.value]})} className="flex-1 p-4 bg-slate-50 rounded-2xl font-bold border-2 border-transparent focus:border-teal-500 outline-none text-xs" placeholder="https://..." />
+                    <img src={editingProduct.images[0]} className="w-12 h-12 rounded-xl object-cover border bg-white" onError={(e) => (e.currentTarget.src = 'https://via.placeholder.com/150')} />
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">복용 방법 안내</label>
+                    <input value={editingProduct.usage} onChange={e => setEditingProduct({...editingProduct, usage: e.target.value})} placeholder="예: 1일 1회 식후 복용" className="p-4 bg-slate-50 rounded-2xl font-bold border-2 border-transparent focus:border-teal-500 outline-none" />
+                </div>
               </div>
-              <button type="submit" className="w-full py-4 bg-teal-600 text-white font-black rounded-2xl shadow-xl hover:bg-teal-700 transition-all">정보 저장 및 동기화</button>
+
+              {/* 상세 성분 관리 */}
+              <div className="space-y-4">
+                <div className="flex justify-between items-center border-l-4 border-teal-500 pl-2">
+                   <h4 className="text-xs font-black text-teal-600 uppercase tracking-widest">주요 성분 및 함량</h4>
+                   <button type="button" onClick={addIngredient} className="text-[10px] font-black bg-teal-50 text-teal-600 px-3 py-1 rounded-full">+ 성분 추가</button>
+                </div>
+                <div className="space-y-2">
+                  {editingProduct.ingredients.map((ing, idx) => (
+                    <div key={idx} className="flex gap-2 items-center animate-in slide-in-from-left duration-200">
+                      <input placeholder="성분명" value={ing.name} onChange={e => updateIngredient(idx, 'name', e.target.value)} className="flex-1 p-3 bg-slate-50 rounded-xl text-xs font-bold outline-none" />
+                      <input type="number" placeholder="함량" value={ing.amount} onChange={e => updateIngredient(idx, 'amount', parseFloat(e.target.value) || 0)} className="w-20 p-3 bg-slate-50 rounded-xl text-xs font-bold outline-none text-center" />
+                      <input placeholder="단위" value={ing.unit} onChange={e => updateIngredient(idx, 'unit', e.target.value)} className="w-16 p-3 bg-slate-50 rounded-xl text-xs font-bold outline-none text-center" />
+                      <button type="button" onClick={() => removeIngredient(idx)} className="text-red-300 hover:text-red-500 p-2">✕</button>
+                    </div>
+                  ))}
+                  {editingProduct.ingredients.length === 0 && (
+                    <p className="text-center py-4 text-slate-300 text-xs font-bold italic border-2 border-dashed border-slate-100 rounded-2xl">등록된 성분이 없습니다.</p>
+                  )}
+                </div>
+              </div>
+
+              {/* 제형 선택 */}
+              <div className="space-y-4">
+                <h4 className="text-xs font-black text-teal-600 uppercase tracking-widest border-l-4 border-teal-500 pl-2">제형(모양) 선택</h4>
+                <div className="grid grid-cols-3 md:grid-cols-5 gap-2">
+                  {[
+                    { id: 'round-white', label: '흰색 원형' },
+                    { id: 'oval-yellow', label: '노란 타원' },
+                    { id: 'capsule-brown', label: '갈색 캡슐' },
+                    { id: 'small-round', label: '작은 원형' },
+                    { id: 'powder-pack', label: '가루/포' }
+                  ].map(type => (
+                    <button
+                      key={type.id}
+                      type="button"
+                      onClick={() => setEditingProduct({...editingProduct, pillType: type.id as PillType})}
+                      className={`p-3 rounded-2xl border-2 text-[10px] font-black transition-all ${editingProduct.pillType === type.id ? 'border-teal-500 bg-teal-50 text-teal-600' : 'border-slate-50 bg-slate-50 text-slate-400'}`}
+                    >
+                      {type.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="sticky bottom-0 bg-white pt-4 pb-2">
+                <button type="submit" className="w-full py-5 bg-teal-600 text-white font-black rounded-3xl shadow-xl hover:bg-teal-700 transition-all transform active:scale-[0.98]">
+                  상세 정보 저장 및 모든 기기 동기화
+                </button>
+              </div>
             </form>
           </div>
         </div>
