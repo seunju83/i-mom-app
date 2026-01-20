@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { Product, ConsultationRecord, Pharmacist, PharmacyConfig, PillType, IngredientInfo } from '../types';
 import RecordDetailModal from './RecordDetailModal';
 
@@ -27,6 +27,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   const [viewingRecord, setViewingRecord] = useState<ConsultationRecord | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [newSyncCode, setNewSyncCode] = useState(syncCode);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const filteredRecords = useMemo(() => {
     return records.filter(r => 
@@ -51,7 +52,34 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     })).filter(c => c.name.includes(searchQuery) || c.phone.includes(searchQuery));
   }, [records, searchQuery]);
 
-  // 성분 추가/삭제 핸들러
+  // 이미지 파일 선택 핸들러
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!editingProduct || !e.target.files) return;
+    
+    const files = Array.from(e.target.files);
+    files.forEach(file => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64String = reader.result as string;
+        setEditingProduct(prev => {
+          if (!prev) return null;
+          // 중복 방지 및 이미지 추가
+          if (prev.images.includes(base64String)) return prev;
+          return { ...prev, images: [...prev.images, base64String] };
+        });
+      };
+      reader.readAsDataURL(file);
+    });
+    // 인풋 초기화 (같은 파일 다시 선택 가능하게)
+    e.target.value = '';
+  };
+
+  const removeImage = (index: number) => {
+    if (!editingProduct) return;
+    const newImages = editingProduct.images.filter((_, i) => i !== index);
+    setEditingProduct({ ...editingProduct, images: newImages });
+  };
+
   const addIngredient = () => {
     if (!editingProduct) return;
     const newIngredients = [...editingProduct.ingredients, { name: '', amount: 0, unit: 'mg' }];
@@ -125,12 +153,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                   보안 연동
                 </button>
              </div>
-             {syncCode && (
-               <div className="text-[10px] font-black bg-teal-500/20 text-teal-400 p-3 rounded-xl flex items-center justify-center gap-2 border border-teal-500/20">
-                 <span className="w-2 h-2 bg-teal-400 rounded-full animate-pulse"></span>
-                 현재 암호화 보호 모드 작동 중
-               </div>
-             )}
           </div>
 
           <div className="bg-white p-8 rounded-[3rem] border border-slate-100 space-y-6">
@@ -149,33 +171,26 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
         </div>
       )}
 
-      {(tab === 'records' || tab === 'customers') && (
-        <input 
-          type="text" placeholder="검색어 입력 (성함/연락처)" 
-          value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
-          className="w-full p-4 border-2 rounded-2xl outline-none focus:border-teal-500 font-bold"
-        />
-      )}
-
       {tab === 'products' && (
         <div className="space-y-4">
-          <div className="flex justify-between items-center">
+          <div className="flex justify-between items-center px-2">
              <h3 className="font-black text-slate-800">제품 관리 ({products.length})</h3>
-             <button onClick={() => setEditingProduct({ id: '', name: '', images: ['https://picsum.photos/seed/new/300/300'], price: 0, storage: '상온', usage: '', ingredients: [], isActive: true, expirationDate: new Date().toISOString().split('T')[0], pillType: 'round-white' })} className="px-4 py-2 bg-teal-600 text-white rounded-xl text-xs font-black">+ 새 제품 등록</button>
+             <button onClick={() => setEditingProduct({ id: '', name: '', images: [], price: 0, storage: '상온', usage: '', ingredients: [], isActive: true, expirationDate: new Date().toISOString().split('T')[0], pillType: 'round-white' })} className="px-5 py-2.5 bg-teal-600 text-white rounded-2xl text-xs font-black shadow-lg shadow-teal-600/20 active:scale-95 transition-all">+ 새 제품 등록</button>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
              {products.map(p => (
                <div key={p.id} className="p-4 bg-white border rounded-[2rem] flex flex-col gap-3 hover:shadow-md transition-all">
                   <div className="flex gap-4">
-                    <img src={p.images[0]} className="w-14 h-14 rounded-xl object-cover bg-slate-50 border" />
+                    <img src={p.images[0] || 'https://via.placeholder.com/150'} className="w-16 h-16 rounded-2xl object-cover bg-slate-50 border shadow-sm" />
                     <div className="flex-1 truncate">
                         <h4 className="font-black text-slate-800 text-sm truncate">{p.name}</h4>
                         <p className="text-xs font-bold text-teal-600">{p.price.toLocaleString()}원</p>
+                        <p className="text-[9px] text-slate-400 mt-0.5">이미지 {p.images.length}장 등록됨</p>
                     </div>
                   </div>
                   <div className="flex gap-2">
-                    <button onClick={() => setEditingProduct(p)} className="flex-1 py-2 bg-slate-50 text-slate-600 font-black text-[10px] rounded-lg hover:bg-slate-100">수정</button>
-                    <button onClick={() => { if(confirm(`'${p.name}' 제품을 삭제하시겠습니까? 다른 기기에서도 삭제됩니다.`)) onUpdateProducts(products.filter(item => item.id !== p.id)) }} className="px-3 py-2 text-red-400 font-black text-[10px] hover:text-red-600">삭제</button>
+                    <button onClick={() => setEditingProduct(p)} className="flex-1 py-2.5 bg-slate-50 text-slate-600 font-black text-[10px] rounded-xl hover:bg-slate-100 transition-colors">수정</button>
+                    <button onClick={() => { if(confirm(`'${p.name}' 제품을 삭제하시겠습니까?`)) onUpdateProducts(products.filter(item => item.id !== p.id)) }} className="px-3 py-2 text-red-400 font-black text-[10px] hover:text-red-600 transition-colors">삭제</button>
                   </div>
                </div>
              ))}
@@ -184,73 +199,52 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
       )}
 
       {tab === 'records' && (
-        <div className="bg-white border rounded-[2rem] overflow-hidden shadow-sm">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-slate-50 font-black text-[10px] text-slate-400 uppercase">
-              <tr>
-                <th className="p-4">날짜</th>
-                <th className="p-4">고객명</th>
-                <th className="p-4 text-center">동작</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y font-bold text-slate-600">
-              {filteredRecords.map(r => (
-                <tr key={r.id} className="hover:bg-slate-50 transition-colors">
-                  <td className="p-4 text-xs">{new Date(r.date).toLocaleDateString()}</td>
-                  <td className="p-4 text-slate-900">{r.customerName}</td>
-                  <td className="p-4 flex gap-2 justify-center">
-                    <button onClick={() => setViewingRecord(r)} className="px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs font-black">상세보기</button>
-                    <button onClick={() => { if(confirm('이 상담 기록을 완전히 삭제하시겠습니까? 다른 기기에서도 사라집니다.')) onUpdateRecords(records.filter(item => item.id !== r.id)) }} className="px-3 py-1.5 bg-red-50 text-red-500 rounded-lg text-xs font-black hover:bg-red-500 hover:text-white transition-all">삭제</button>
-                  </td>
-                </tr>
-              ))}
-              {filteredRecords.length === 0 && (
-                <tr>
-                  <td colSpan={3} className="p-20 text-center text-slate-300 font-bold italic">기록이 없습니다.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {tab === 'customers' && (
-        <div className="bg-white border rounded-[2rem] overflow-hidden shadow-sm">
-           <table className="w-full text-left text-sm">
+        <div className="space-y-4">
+          <input 
+            type="text" placeholder="고객 성함 또는 연락처 검색" 
+            value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+            className="w-full p-4 border-2 rounded-2xl outline-none focus:border-teal-500 font-bold"
+          />
+          <div className="bg-white border rounded-[2rem] overflow-hidden shadow-sm">
+            <table className="w-full text-left text-sm">
               <thead className="bg-slate-50 font-black text-[10px] text-slate-400 uppercase">
                 <tr>
-                  <th className="p-4">성함</th>
-                  <th className="p-4">연락처</th>
-                  <th className="p-4">방문수</th>
-                  <th className="p-4 text-center">관리</th>
+                  <th className="p-4">날짜</th>
+                  <th className="p-4">고객명</th>
+                  <th className="p-4 text-center">동작</th>
                 </tr>
               </thead>
               <tbody className="divide-y font-bold text-slate-600">
-                {uniqueCustomers.map(c => (
-                  <tr key={`${c.name}-${c.phone}`} className="hover:bg-slate-50 transition-colors">
-                    <td className="p-4 text-slate-900">{c.name}</td>
-                    <td className="p-4 font-mono text-xs text-slate-400">{c.phone}</td>
-                    <td className="p-4"><span className="bg-teal-50 text-teal-600 px-2 py-0.5 rounded-full text-xs">{c.count}회 방문</span></td>
-                    <td className="p-4 text-center">
-                      <button onClick={() => { setSearchQuery(c.name); setTab('records'); }} className="text-teal-600 text-xs font-black hover:underline">기록보기</button>
+                {filteredRecords.map(r => (
+                  <tr key={r.id} className="hover:bg-slate-50 transition-colors">
+                    <td className="p-4 text-xs">{new Date(r.date).toLocaleDateString()}</td>
+                    <td className="p-4 text-slate-900">{r.customerName}</td>
+                    <td className="p-4 flex gap-2 justify-center">
+                      <button onClick={() => setViewingRecord(r)} className="px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs font-black">상세보기</button>
+                      <button onClick={() => { if(confirm('이 기록을 삭제하시겠습니까?')) onUpdateRecords(records.filter(item => item.id !== r.id)) }} className="px-3 py-1.5 bg-red-50 text-red-500 rounded-lg text-xs font-black hover:bg-red-500 hover:text-white transition-all">삭제</button>
                     </td>
                   </tr>
                 ))}
               </tbody>
-           </table>
+            </table>
+          </div>
         </div>
       )}
 
       {editingProduct && (
         <div className="fixed inset-0 bg-slate-900/60 z-[300] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
           <div className="bg-white w-full max-w-2xl rounded-[3rem] shadow-2xl flex flex-col overflow-hidden max-h-[90vh]">
-            <div className="p-6 border-b bg-slate-50 flex justify-between items-center sticky top-0 bg-slate-50 z-10">
-              <h3 className="text-xl font-black">{editingProduct.id ? '제품 상세 정보 수정' : '새 제품 등록'}</h3>
-              <button onClick={() => setEditingProduct(null)} className="text-slate-400 font-bold text-xl">✕</button>
+            <div className="p-6 border-b bg-slate-50 flex justify-between items-center sticky top-0 z-10">
+              <h3 className="text-xl font-black">{editingProduct.id ? '제품 정보 수정' : '새 제품 등록'}</h3>
+              <button onClick={() => setEditingProduct(null)} className="text-slate-400 font-bold text-xl hover:text-slate-900">✕</button>
             </div>
             
             <form onSubmit={(e) => {
                e.preventDefault();
+               if (editingProduct.images.length === 0) {
+                 alert('최소 1장 이상의 제품 이미지를 등록해주세요.');
+                 return;
+               }
                const updated = editingProduct.id 
                  ? products.map(p => p.id === editingProduct.id ? editingProduct : p)
                  : [...products, { ...editingProduct, id: `P-${Date.now()}` }];
@@ -258,13 +252,49 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                setEditingProduct(null);
             }} className="flex-1 overflow-y-auto p-8 space-y-8">
               
-              {/* 기본 정보 섹션 */}
+              <div className="space-y-4">
+                <h4 className="text-xs font-black text-teal-600 uppercase tracking-widest border-l-4 border-teal-500 pl-2">제품 이미지 관리 (2장 이상 권장)</h4>
+                
+                <input 
+                  type="file" 
+                  ref={fileInputRef} 
+                  multiple 
+                  accept="image/*" 
+                  onChange={handleImageUpload} 
+                  className="hidden" 
+                />
+
+                <div className="grid grid-cols-3 md:grid-cols-4 gap-3">
+                  {editingProduct.images.map((img, idx) => (
+                    <div key={idx} className="relative group aspect-square">
+                      <img src={img} className="w-full h-full rounded-2xl object-cover border-2 border-slate-100 shadow-sm" />
+                      <button 
+                        type="button" 
+                        onClick={() => removeImage(idx)} 
+                        className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center text-xs font-bold shadow-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        ✕
+                      </button>
+                      {idx === 0 && <span className="absolute bottom-2 left-2 bg-teal-600 text-white text-[8px] px-2 py-0.5 rounded-full font-black">대표 이미지</span>}
+                    </div>
+                  ))}
+                  <button 
+                    type="button" 
+                    onClick={() => fileInputRef.current?.click()}
+                    className="aspect-square rounded-2xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center gap-1 text-slate-400 hover:border-teal-500 hover:text-teal-500 hover:bg-teal-50 transition-all"
+                  >
+                    <span className="text-2xl">+</span>
+                    <span className="text-[10px] font-black uppercase">사진 추가</span>
+                  </button>
+                </div>
+              </div>
+
               <div className="space-y-4">
                 <h4 className="text-xs font-black text-teal-600 uppercase tracking-widest border-l-4 border-teal-500 pl-2">기본 정보</h4>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] font-black text-slate-400 uppercase">제품명 *</label>
-                    <input required value={editingProduct.name} onChange={e => setEditingProduct({...editingProduct, name: e.target.value})} className="p-4 bg-slate-50 rounded-2xl font-bold border-2 border-transparent focus:border-teal-500 outline-none" placeholder="제품명을 입력하세요" />
+                    <input required value={editingProduct.name} onChange={e => setEditingProduct({...editingProduct, name: e.target.value})} className="p-4 bg-slate-50 rounded-2xl font-bold border-2 border-transparent focus:border-teal-500 outline-none" />
                   </div>
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] font-black text-slate-400 uppercase">판매 가격(원) *</label>
@@ -284,25 +314,12 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                     <input type="date" required value={editingProduct.expirationDate} onChange={e => setEditingProduct({...editingProduct, expirationDate: e.target.value})} className="p-4 bg-slate-50 rounded-2xl font-bold border-2 border-transparent focus:border-teal-500 outline-none" />
                   </div>
                 </div>
-              </div>
-
-              {/* 이미지 및 복용법 */}
-              <div className="space-y-4">
-                <h4 className="text-xs font-black text-teal-600 uppercase tracking-widest border-l-4 border-teal-500 pl-2">이미지 및 복용법</h4>
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-black text-slate-400 uppercase">제품 이미지 URL</label>
-                  <div className="flex gap-3 items-center">
-                    <input value={editingProduct.images[0]} onChange={e => setEditingProduct({...editingProduct, images: [e.target.value]})} className="flex-1 p-4 bg-slate-50 rounded-2xl font-bold border-2 border-transparent focus:border-teal-500 outline-none text-xs" placeholder="https://..." />
-                    <img src={editingProduct.images[0]} className="w-12 h-12 rounded-xl object-cover border bg-white" onError={(e) => (e.currentTarget.src = 'https://via.placeholder.com/150')} />
-                  </div>
-                </div>
                 <div className="flex flex-col gap-1">
                     <label className="text-[10px] font-black text-slate-400 uppercase">복용 방법 안내</label>
                     <input value={editingProduct.usage} onChange={e => setEditingProduct({...editingProduct, usage: e.target.value})} placeholder="예: 1일 1회 식후 복용" className="p-4 bg-slate-50 rounded-2xl font-bold border-2 border-transparent focus:border-teal-500 outline-none" />
                 </div>
               </div>
 
-              {/* 상세 성분 관리 */}
               <div className="space-y-4">
                 <div className="flex justify-between items-center border-l-4 border-teal-500 pl-2">
                    <h4 className="text-xs font-black text-teal-600 uppercase tracking-widest">주요 성분 및 함량</h4>
@@ -310,45 +327,19 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                 </div>
                 <div className="space-y-2">
                   {editingProduct.ingredients.map((ing, idx) => (
-                    <div key={idx} className="flex gap-2 items-center animate-in slide-in-from-left duration-200">
+                    <div key={idx} className="flex gap-2 items-center">
                       <input placeholder="성분명" value={ing.name} onChange={e => updateIngredient(idx, 'name', e.target.value)} className="flex-1 p-3 bg-slate-50 rounded-xl text-xs font-bold outline-none" />
                       <input type="number" placeholder="함량" value={ing.amount} onChange={e => updateIngredient(idx, 'amount', parseFloat(e.target.value) || 0)} className="w-20 p-3 bg-slate-50 rounded-xl text-xs font-bold outline-none text-center" />
                       <input placeholder="단위" value={ing.unit} onChange={e => updateIngredient(idx, 'unit', e.target.value)} className="w-16 p-3 bg-slate-50 rounded-xl text-xs font-bold outline-none text-center" />
                       <button type="button" onClick={() => removeIngredient(idx)} className="text-red-300 hover:text-red-500 p-2">✕</button>
                     </div>
                   ))}
-                  {editingProduct.ingredients.length === 0 && (
-                    <p className="text-center py-4 text-slate-300 text-xs font-bold italic border-2 border-dashed border-slate-100 rounded-2xl">등록된 성분이 없습니다.</p>
-                  )}
                 </div>
               </div>
 
-              {/* 제형 선택 */}
-              <div className="space-y-4">
-                <h4 className="text-xs font-black text-teal-600 uppercase tracking-widest border-l-4 border-teal-500 pl-2">제형(모양) 선택</h4>
-                <div className="grid grid-cols-3 md:grid-cols-5 gap-2">
-                  {[
-                    { id: 'round-white', label: '흰색 원형' },
-                    { id: 'oval-yellow', label: '노란 타원' },
-                    { id: 'capsule-brown', label: '갈색 캡슐' },
-                    { id: 'small-round', label: '작은 원형' },
-                    { id: 'powder-pack', label: '가루/포' }
-                  ].map(type => (
-                    <button
-                      key={type.id}
-                      type="button"
-                      onClick={() => setEditingProduct({...editingProduct, pillType: type.id as PillType})}
-                      className={`p-3 rounded-2xl border-2 text-[10px] font-black transition-all ${editingProduct.pillType === type.id ? 'border-teal-500 bg-teal-50 text-teal-600' : 'border-slate-50 bg-slate-50 text-slate-400'}`}
-                    >
-                      {type.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="sticky bottom-0 bg-white pt-4 pb-2">
+              <div className="sticky bottom-0 bg-white pt-6 pb-2">
                 <button type="submit" className="w-full py-5 bg-teal-600 text-white font-black rounded-3xl shadow-xl hover:bg-teal-700 transition-all transform active:scale-[0.98]">
-                  상세 정보 저장 및 모든 기기 동기화
+                  제품 정보 저장 및 동기화
                 </button>
               </div>
             </form>
