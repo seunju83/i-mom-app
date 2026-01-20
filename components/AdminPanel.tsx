@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Product, ConsultationRecord, Pharmacist, PharmacyConfig, PillType } from '../types';
 import RecordDetailModal from './RecordDetailModal';
 
@@ -20,15 +20,16 @@ interface AdminPanelProps {
 }
 
 const AdminPanel: React.FC<AdminPanelProps> = ({ 
-    products, records, pharmacists, config, syncCode,
+    products, records, pharmacists, config,
     onUpdateProducts, onUpdateRecords, onUpdatePharmacists, onUpdateConfig,
-    onSetSyncCode, onForcePush, sbConfig, onSetSbConfig
+    onForcePush, sbConfig, onSetSbConfig
 }) => {
   const [tab, setTab] = useState<'products' | 'records' | 'settings'>('products');
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [viewingRecord, setViewingRecord] = useState<ConsultationRecord | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   
+  // Supabase 설정을 위한 로컬 상태
   const [tempSbUrl, setTempSbUrl] = useState(sbConfig?.url || '');
   const [tempSbKey, setTempSbKey] = useState(sbConfig?.key || '');
 
@@ -90,33 +91,58 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
 
       {tab === 'settings' && (
         <div className="space-y-6 animate-in slide-in-from-bottom">
+          {/* Supabase 설정 영역 (검은색 배경) */}
           <div className="bg-slate-900 p-8 rounded-[3rem] text-white space-y-6 shadow-xl">
              <div className="flex justify-between items-center">
-               <h4 className="text-xl font-black">🔗 Supabase 클라우드 연동</h4>
-               <button onClick={onForcePush} className="px-4 py-2 bg-teal-500 text-white rounded-xl text-[10px] font-black hover:scale-105 active:scale-95 transition-all">지금 데이터 동기화</button>
+               <h4 className="text-xl font-black">🔗 Supabase 클라우드 실시간 연동</h4>
+               <button onClick={onForcePush} className="px-4 py-2 bg-teal-500 text-white rounded-xl text-[10px] font-black hover:scale-105 active:scale-95 transition-all">수동 동기화</button>
              </div>
-             <div className="space-y-4">
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">1. Supabase 프로젝트 주소 (Project URL)</label>
-                  <input type="text" value={tempSbUrl} onChange={e => setTempSbUrl(e.target.value)} placeholder="예: https://abcdefghijkl.supabase.co" className="w-full p-4 bg-white/10 border-2 border-white/10 rounded-2xl outline-none focus:border-teal-500 font-bold text-white text-sm" />
+
+             <div className="space-y-5">
+                {/* 1. URL 입력 항목 */}
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">1. Supabase 프로젝트 주소 (Project URL)</label>
+                  <input 
+                    type="text" 
+                    value={tempSbUrl} 
+                    onChange={e => setTempSbUrl(e.target.value)} 
+                    placeholder="예: https://abcdefghijkl.supabase.co" 
+                    className="w-full p-5 bg-white/10 border-2 border-white/5 rounded-2xl outline-none focus:border-teal-500 font-bold text-white text-sm transition-all" 
+                  />
                 </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">2. API 공개 키 (Anon Public Key)</label>
-                  <input type="password" value={tempSbKey} onChange={e => setTempSbKey(e.target.value)} placeholder="비밀키를 입력하세요 (eyJ...)" className="w-full p-4 bg-white/10 border-2 border-white/10 rounded-2xl outline-none focus:border-teal-500 font-bold text-white text-sm" />
+
+                {/* 2. Key 입력 항목 */}
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">2. API 공개 키 (Anon Public Key)</label>
+                  <input 
+                    type="password" 
+                    value={tempSbKey} 
+                    onChange={e => setTempSbKey(e.target.value)} 
+                    placeholder="eyJ...로 시작하는 아주 긴 키를 입력하세요" 
+                    className="w-full p-5 bg-white/10 border-2 border-white/5 rounded-2xl outline-none focus:border-teal-500 font-bold text-white text-sm transition-all" 
+                  />
                 </div>
-                <button onClick={() => onSetSbConfig?.(tempSbUrl, tempSbKey)} className="w-full py-4 bg-teal-600 text-white font-black rounded-2xl shadow-lg hover:bg-teal-500 transition-all mt-2">설정 저장 및 연동</button>
+
+                <button 
+                  onClick={() => onSetSbConfig?.(tempSbUrl, tempSbKey)} 
+                  className="w-full py-5 bg-teal-600 text-white font-black rounded-2xl shadow-lg hover:bg-teal-500 active:scale-95 transition-all mt-2"
+                >
+                  설정 저장 및 클라우드 연결
+                </button>
              </div>
-             <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
+
+             <div className="p-5 bg-white/5 rounded-[2rem] border border-white/5">
                 <p className="text-[11px] text-teal-400 font-black mb-1">💡 도움말</p>
                 <p className="text-[10px] text-slate-400 leading-relaxed font-medium">
-                  Supabase 대시보드 -> Settings -> API 메뉴에서 위 정보를 찾을 수 있습니다.<br />
-                  연동 성공 시 상단 헤더에 <span className="text-teal-400">"클라우드 동기화 완료"</span> 메시지가 뜹니다.
+                  • Supabase 사이트의 [Settings] -> [API] 메뉴에 있는 정보를 입력하세요.<br />
+                  • 두 기기 모두 동일한 정보를 입력하면 실시간으로 데이터가 공유됩니다.<br />
+                  • 연결 성공 시 앱 상단에 <span className="text-teal-400">"클라우드 동기화 완료"</span>가 표시됩니다.
                 </p>
              </div>
           </div>
 
           <div className="bg-white p-8 rounded-[3rem] border space-y-6 shadow-sm">
-             <h4 className="text-xl font-black text-slate-800">💾 데이터 수동 백업</h4>
+             <h4 className="text-xl font-black text-slate-800">💾 데이터 수동 파일 백업</h4>
              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <button onClick={exportData} className="p-5 bg-slate-800 text-white rounded-2xl font-black text-sm hover:bg-black transition-all">내보내기 (JSON 파일로 저장)</button>
                 <label className="p-5 bg-slate-100 text-slate-600 rounded-2xl font-black text-sm text-center cursor-pointer hover:bg-slate-200 transition-all">
